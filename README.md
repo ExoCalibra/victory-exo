@@ -24,14 +24,14 @@ developer or publisher.
 See [docs/exo-rtx3080ti-notes.md](docs/exo-rtx3080ti-notes.md) for the full
 measured millisecond breakdown, switch list, and upcoming NVIDIA PR roadmap.
 
-## What is Included on `exo-465b94f`
+## What is Included on `exo-ca8829f`
 
-Built on `fxceless/victory-fork` `main` (`465b94f` — parts joined, copy-back through own view, scattered indirect records clamped once per list via `VICTORY_INDIRECT_GATHER=1`):
+Built on `fxceless/victory-fork` `main` (`ca8829f` — on-screen FPS corner overlay, parts joined via `VICTORY_JOIN_PARTS=1`, copy-back through own view via `VICTORY_BACK_OWN_VIEW=1`, scattered indirect records clamped once per list via `VICTORY_INDIRECT_GATHER=1`, changed-bytes card-copy refresh):
 
 - **Water buoyancy & CPU-read texture copy-back** ([Geckomacabre/vx-layer](https://github.com/Geckomacabre/vx-layer) `eee5667`, `VICTORY_TEXTURE_BACK`, on by default): copies GPU-written ocean height/displacement textures (`256x256` `R32_FLOAT` / `R32G32_FLOAT`, `64x64` `R32G32_FLOAT`, `128x128` `R16G16_UINT`) back into title memory in console-tiled layout (`victory_formats::Layout::tile`).
 - **Facial & mouth animations** (`fxceless/victory-fork#927`): preserves 16-bit buffer view bits through unsigned integer views so the facial animation compute graph animates mouths instead of outputting zeros.
 - **Wave32 shaders round 2** (`fxceless/victory-fork#993`, includes `#854`) & **RTX code-table fix** (`#1006`, port of `Marvisak/VIctory#2143`): paired Wave64-on-Wave32 lowering, geometry shaders, console-accurate loops, lighter Wave64 forms, mesh+pixel linking, and dispatches past 65,535 groups in X.
-- **Async asset streaming & CPU/GPU performance**: `#1007` (`VICTORY_HEAP_WORKER=1` async background worker for heap-indexed texture uploads), `#1018` (`VICTORY_TEXTURE_DIRTY_GEN=1` + `VICTORY_XMEM_PERSISTENT_VIEW=1` to skip CPU BLAKE3 texture re-hashing), `#1020` (park emulated `MONITORX`/`MWAITX` waits on layer-owned GPU fences), `#1005` (notify GPU after unmapping view), `#992` (64-thread coalesced `CARD_COMPARE`).
+- **Frame rate & asset-streaming stack**: `#1032` (in-place guarded writes for `write_mapped` when `VICTORY_COPY_PLAIN=1`, -20 ms copy-back), `#1031` (bound texture queue work and keep sampling on resident mips), `#1023` (keep streamed textures with mapped mip data in the middle), `#1007` (`VICTORY_HEAP_WORKER=1` async background worker for heap-indexed texture uploads), `#1020` (park emulated `MONITORX`/`MWAITX` waits on layer-owned GPU fences), `#1005` (notify GPU after unmapping view), `#992` (64-thread coalesced `CARD_COMPARE`).
 - **Pipeline & staging fixes** ([Geckomacabre/vx-layer](https://github.com/Geckomacabre/vx-layer) `cf815a8`, `5492b73`, `b2d82ab`): disables blending on integer render targets, rebuilds pipelines for mismatched bound target formats, and rechecks staging time/byte budgets.
 - **Visuals, controls & stability**: `#936` (Shadow `SNAPS` use-after-free fix), `#911` (64 KiB CBV clamp for NVIDIA), `#907` (early depth stencil), `#903` (`VICTORY_PLACED_TEX`), `#374` (BC7 rainbow-block fix), `#896` (streaming bursts), `#892` (screen-pass workers), `#886` & `#855` (DirectStorage), `#868` (WC copy-back switch), `#798` (Series S profile), `#768`, `#764`, `#765`, `#644`, `#632`, `#559`, `#510`, `#577` (keyboard + mouse), and `#845`.
 
@@ -47,8 +47,9 @@ set VICTORY_WIDE_TEXTURES=1
 set VICTORY_INDIRECT_WINDOW=1
 set VICTORY_INDIRECT_GATHER=1
 set VICTORY_HEAP_WORKER=1
-set VICTORY_XMEM_PERSISTENT_VIEW=1
-set VICTORY_TEXTURE_DIRTY_GEN=1
+set VICTORY_JOIN_PARTS=1
+set VICTORY_BACK_OWN_VIEW=1
+set VICTORY_COPY_PLAIN=1
 set VICTORY_CARD_REHASH_RUNS=1
 set VICTORY_CARD_BUFFERS_MIN_MB=1
 set VICTORY_CARD_BUFFERS_MB=1024
@@ -57,7 +58,7 @@ set VICTORY_PIPELINE_WAIT_MS=24
 set VICTORY_JOIN_COPIES=1
 ```
 
-> **Note:** Do **not** enable `VICTORY_CARD_FETCH_INFLIGHT=1` alongside `VICTORY_QUEUE2=1` + `VICTORY_INDIRECT_WINDOW=1` (causes severe GPU stalls / device loss). Keep `VICTORY_SKIP_WC_COMPARE=1` off for normal gameplay.
+> **Note:** Do **not** enable `VICTORY_CARD_FETCH_INFLIGHT=1` alongside `VICTORY_QUEUE2=1` + `VICTORY_INDIRECT_WINDOW=1` (causes severe GPU stalls / device loss). Keep `VICTORY_XMEM_PERSISTENT_VIEW=1` / `VICTORY_TEXTURE_DIRTY_GEN=1` (`#1018`) **off** (caused a 30s watchdog freeze during intro streaming on RTX 3080 Ti). Keep `VICTORY_SKIP_WC_COMPARE=1` off for normal gameplay.
 
 ## Credits
 

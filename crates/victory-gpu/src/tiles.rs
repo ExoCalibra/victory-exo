@@ -599,7 +599,7 @@ impl Tiled {
     }
 
     #[cfg(test)]
-    fn first_shown(&self) -> Option<u32> {
+    pub(crate) fn first_shown(&self) -> Option<u32> {
         let shown = self.shown_levels();
         (shown != 0).then(|| shown.trailing_zeros())
     }
