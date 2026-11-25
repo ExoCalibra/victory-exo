@@ -21,6 +21,7 @@ pub fn run(
     let cfg = victory_core::Config::load()?;
     victory_hle::modules::controls::configure(cfg.controls.as_ref())
         .map_err(anyhow::Error::msg)?;
+    victory_hle::modules::xmem::register_page_gen_oracle();
     let original = std::fs::read(exe).with_context(|| format!("reading {}", exe.display()))?;
     let mut prepared = victory_loader::prepare(&original)?;
     let hash = prepared.original_hash.to_hex();
