@@ -1,4 +1,28 @@
-# VIctory fork (work in progress)
+# victory-exo (NVIDIA Wave32 Fork)
+
+An NVIDIA Wave32 (RTX 3080 Ti 12 GB, SM 6.6, Windows 11) integration fork of
+[fxceless/victory-fork](https://github.com/fxceless/victory-fork) and
+[Marvisak/VIctory](https://github.com/Marvisak/VIctory), combining upstream
+performance and shader improvements with vetted community pull requests and
+cross-fork fixes.
+
+**This repository contains no game files, code or assets.** You need your own
+copy of the title. It is not affiliated with or endorsed by the title's
+developer or publisher.
+
+## What is included on `exo-0b0074e`
+
+Built on `fxceless/victory-fork` `main` (`0b0074e`):
+
+- **Water buoyancy & CPU-read texture copy-back** ([Geckomacabre/vx-layer](https://github.com/Geckomacabre/vx-layer) `eee5667`, `VICTORY_TEXTURE_BACK`, on by default): copies GPU-written ocean height/displacement textures (`256x256` `R32_FLOAT` / `R32G32_FLOAT`, `64x64` `R32G32_FLOAT`, `128x128` `R16G16_UINT`) back into title memory in console-tiled layout so boats float and drive properly.
+- **Facial & mouth animations** (`fxceless/victory-fork#927`): preserves 16-bit buffer view bits through unsigned integer views so the facial animation compute graph animates mouths instead of outputting zeros.
+- **Wave32 shaders round 2** (`fxceless/victory-fork#993`, includes `#854`): paired Wave64-on-Wave32 lowering, geometry shaders, console-accurate loops, lighter Wave64 forms, mesh+pixel linking, and dispatches past 65,535 groups in X.
+- **Pipeline & staging fixes** ([Geckomacabre/vx-layer](https://github.com/Geckomacabre/vx-layer) `cf815a8`, `5492b73`, `b2d82ab`): disables blending on integer render targets, rebuilds pipelines for mismatched bound target formats, and rechecks staging time/byte budgets.
+- **Performance, streaming, visuals & stability**: `#992` (64-thread coalesced `CARD_COMPARE`), `#936` (Shadow `SNAPS` use-after-free fix), `#911` (64 KiB CBV clamp for NVIDIA), `#907` (early depth stencil), `#903` (`VICTORY_PLACED_TEX`), `#374` (BC7 rainbow-block fix), `#896` (streaming bursts), `#892` (screen-pass workers), `#886` & `#855` (DirectStorage), `#868` (WC copy-back switch), `#798` (Series S profile), `#768`, `#764`, `#765`, `#644`, `#632`, `#559`, `#510`, `#577` (keyboard + mouse), and `#845`.
+
+---
+
+## Upstream README (`fxceless/victory-fork`)
 
 A work-in-progress fork of [VIctory](https://github.com/Marvisak/VIctory), a
 compatibility layer that runs an Xbox Series title natively on Windows from
