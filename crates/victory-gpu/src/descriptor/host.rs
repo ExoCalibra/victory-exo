@@ -4166,7 +4166,7 @@ void BY_FLOATS_OR_NOT(uint3 id : SV_DispatchThreadID) {
         super::super::create_placed_uav(std::ptr::null(), &vol_res, &vol_uav, slot_handle);
         assert!(heap.mirror(0, slot_handle, false).is_some());
         {
-            let kept = heap.kept.lock().unwrap();
+            let kept = heap.kept[0].lock().unwrap();
             let tex = kept[0].as_ref().expect("3D placed UAV must mirror immediately");
             // SAFETY: live D3D12 resource.
             let d = unsafe { tex.GetDesc() };
