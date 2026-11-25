@@ -1608,7 +1608,12 @@ impl HostHeap {
         self.tiled_shown
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .is_stale(slot, |on_demand| on_demand.tiled().and_then(|t| t.first_shown()))
+            .is_stale(slot, |on_demand| {
+                on_demand.tiled().and_then(|t| {
+                    let levels = t.shown_levels();
+                    (levels != 0).then(|| levels.trailing_zeros())
+                })
+            })
     }
 
     /// The memory of the texture title slot `index` views is not mapped
