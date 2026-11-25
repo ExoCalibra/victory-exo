@@ -2023,6 +2023,7 @@ struct Deferred {
     /// address, bytes): refreshing them again would find the same bytes.
     refreshed: std::collections::HashSet<(usize, usize, usize)>,
     /// Textures whose contents the list brings up to date.
+    gpu_detiles: Vec<std::sync::Arc<crate::texture::Staging>>,
     textures: std::collections::HashSet<usize>,
     /// Bottom-of-pipe writes, done once the list has run: address, what,
     /// bytes.
@@ -6543,7 +6544,8 @@ impl HostList {
         // The records the list's draws read from slots (`crate::indirect::gather`).
         let gather = self.gather.lock().unwrap_or_else(|e| e.into_inner());
         let gathered = gather.sets.iter().any(|s| s.records() > 0);
-        if barriers.is_empty() && syncs.is_empty() && !gathered {
+        let deferred = self.deferred();
+        if barriers.is_empty() && syncs.is_empty() && !gathered && deferred.gpu_detiles.is_empty() {
             return None;
         }
         let Some((allocator, list)) = self
@@ -6578,6 +6580,9 @@ impl HostList {
                     if !filled {
                         fail(format_args!("a list's gathered indirect records could not be clamped in its prelude"));
                     }
+                }
+                for staging in &deferred.gpu_detiles {
+                    staging.record_gpu_detile(list);
                 }
                 list.Close()
             })
@@ -7092,6 +7097,10 @@ impl HostList {
 
     /// Brings a texture's staging buffer up to date when the list is
     /// submitted, keeping it alive until the list is reset.
+    pub(crate) fn defer_gpu_detile(&self, staging: std::sync::Arc<crate::texture::Staging>) {
+        self.deferred().gpu_detiles.push(staging);
+    }
+
     pub(crate) fn defer_texture(&self, staging: std::sync::Arc<crate::texture::Staging>) {
         self.deferred().copies.push(Step::Texture(staging));
     }
