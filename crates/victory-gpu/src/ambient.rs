@@ -17,8 +17,6 @@
 
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU32, Ordering};
-use windows::Win32::Graphics::Direct3D::Fxc::D3DCompile;
-use windows::Win32::Graphics::Direct3D::ID3DBlob;
 use windows::Win32::Graphics::Direct3D12::*;
 use windows::Win32::Graphics::Dxgi::Common::*;
 use windows::core::s;
@@ -222,36 +220,8 @@ unsafe impl Send for Pass {}
 unsafe impl Sync for Pass {}
 
 fn make(device: &ID3D12Device) -> windows::core::Result<Pass> {
-    let mut code: Option<ID3DBlob> = None;
-    let mut errors: Option<ID3DBlob> = None;
-    // SAFETY: the source and names live through the call; out pointers ours.
-    let compiled = unsafe {
-        D3DCompile(
-            SOURCE.as_ptr().cast(),
-            SOURCE.len(),
-            s!("ambient"),
-            None,
-            None,
-            s!("main"),
-            s!("cs_5_1"),
-            0,
-            0,
-            &mut code,
-            Some(&mut errors),
-        )
-    };
-    let text = |b: &ID3DBlob| {
-        // SAFETY: the blob's own bytes.
-        unsafe { std::slice::from_raw_parts(b.GetBufferPointer().cast::<u8>(), b.GetBufferSize()) }
-            .to_vec()
-    };
-    if let Err(e) = compiled {
-        if let Some(errors) = errors {
-            tracing::warn!("ambient light: {}", String::from_utf8_lossy(&text(&errors)));
-        }
-        return Err(e);
-    }
-    let code = text(&code.ok_or_else(windows::core::Error::empty)?);
+    // The layer's shared compiler, as the indirect clamp uses (and any fallback it gets).
+    let code = crate::host::compile(SOURCE, s!("main"), s!("cs_5_1"))?;
     // SAFETY: the root signature is inside the shader; plain creations.
     unsafe {
         let root: ID3D12RootSignature = device.CreateRootSignature(0, &code)?;
