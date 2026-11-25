@@ -1086,7 +1086,11 @@ impl HostHeap {
         let strides = (!sampler)
             .then(|| {
                 let bytes = u64::from(victory_shader::emit::SLOT_STRIDES_COUNT) * 4;
-                let (buffer, data) = host.upload_buffer(bytes)?;
+                static GPU_UPLOAD: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+                let prefer_local = *GPU_UPLOAD.get_or_init(|| {
+                    std::env::var_os("VICTORY_GPU_UPLOAD_STRIDES").is_some_and(|v| v == "1")
+                });
+                let (buffer, data) = host.upload_descriptor_strides(bytes, prefer_local)?;
                 // SAFETY: the buffer's whole mapping; a live buffer.
                 let gpu = unsafe {
                     std::ptr::write_bytes(data, 0, bytes as usize);
