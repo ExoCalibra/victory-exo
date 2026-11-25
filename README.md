@@ -31,7 +31,7 @@ Built on `fxceless/victory-fork` `main` (`ca8829f` — on-screen FPS corner over
 - **Water buoyancy & CPU-read texture copy-back** ([Geckomacabre/vx-layer](https://github.com/Geckomacabre/vx-layer) `eee5667`, `VICTORY_TEXTURE_BACK`, on by default): copies GPU-written ocean height/displacement textures (`256x256` `R32_FLOAT` / `R32G32_FLOAT`, `64x64` `R32G32_FLOAT`, `128x128` `R16G16_UINT`) back into title memory in console-tiled layout (`victory_formats::Layout::tile`).
 - **Facial & mouth animations** (`fxceless/victory-fork#927`): preserves 16-bit buffer view bits through unsigned integer views so the facial animation compute graph animates mouths instead of outputting zeros.
 - **Wave32 shaders round 2** (`fxceless/victory-fork#993`, includes `#854`) & **RTX code-table fix** (`#1006`, port of `Marvisak/VIctory#2143`): paired Wave64-on-Wave32 lowering, geometry shaders, console-accurate loops, lighter Wave64 forms, mesh+pixel linking, and dispatches past 65,535 groups in X.
-- **Frame rate & asset-streaming stack**: `#1032` (in-place guarded writes for `write_mapped` when `VICTORY_COPY_PLAIN=1`, -20 ms copy-back), `#1031` (bound texture queue work and keep sampling on resident mips), `#1023` (keep streamed textures with mapped mip data in the middle), `#1007` (`VICTORY_HEAP_WORKER=1` async background worker for heap-indexed texture uploads), `#1020` (park emulated `MONITORX`/`MWAITX` waits on layer-owned GPU fences), `#1005` (notify GPU after unmapping view), `#992` (64-thread coalesced `CARD_COMPARE`).
+- **Frame rate & asset-streaming stack**: `#1044` (size DirectStorage worker pool to physical cores), `#1043` (cut per-slot lock churn, self-requeueing, and duplicate shadow lookups in `sync_heaps`/`heap_buffers`), `#1032` (in-place guarded writes for `write_mapped` when `VICTORY_COPY_PLAIN=1`, -20 ms copy-back), `#1031` (bound texture queue work and keep sampling on resident mips), `#1023` (keep streamed textures with mapped mip data in the middle), `#1007` (`VICTORY_HEAP_WORKER=1` async background worker for heap-indexed texture uploads), `#1020` (park emulated `MONITORX`/`MWAITX` waits on layer-owned GPU fences), `#1005` (notify GPU after unmapping view), `#992` (64-thread coalesced `CARD_COMPARE`).
 - **Pipeline & staging fixes** ([Geckomacabre/vx-layer](https://github.com/Geckomacabre/vx-layer) `cf815a8`, `5492b73`, `b2d82ab`): disables blending on integer render targets, rebuilds pipelines for mismatched bound target formats, and rechecks staging time/byte budgets.
 - **Visuals, controls & stability**: `#936` (Shadow `SNAPS` use-after-free fix), `#911` (64 KiB CBV clamp for NVIDIA), `#907` (early depth stencil), `#903` (`VICTORY_PLACED_TEX`), `#374` (BC7 rainbow-block fix), `#896` (streaming bursts), `#892` (screen-pass workers), `#886` & `#855` (DirectStorage), `#868` (WC copy-back switch), `#798` (Series S profile), `#768`, `#764`, `#765`, `#644`, `#632`, `#559`, `#510`, `#577` (keyboard + mouse), and `#845`.
 
@@ -53,6 +53,8 @@ set VICTORY_COPY_PLAIN=1
 set VICTORY_CARD_REHASH_RUNS=1
 set VICTORY_CARD_BUFFERS_MIN_MB=1
 set VICTORY_CARD_BUFFERS_MB=1024
+set VICTORY_TEXTURE_ROOM_PERCENT=94
+set VICTORY_TEXTURE_STAGE_MB=384
 set VICTORY_TEXTURE_NO_WAIT=1
 set VICTORY_PIPELINE_WAIT_MS=24
 set VICTORY_JOIN_COPIES=1
