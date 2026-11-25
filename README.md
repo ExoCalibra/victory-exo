@@ -1,24 +1,65 @@
 # victory-exo (NVIDIA Wave32 Fork)
 
-An NVIDIA Wave32 (RTX 3080 Ti 12 GB, SM 6.6, Windows 11) integration fork of
+An NVIDIA Wave32 integration and benchmarking fork of
 [fxceless/victory-fork](https://github.com/fxceless/victory-fork) and
-[Marvisak/VIctory](https://github.com/Marvisak/VIctory), combining upstream
-performance and shader improvements with vetted community pull requests and
-cross-fork fixes.
+[Marvisak/VIctory](https://github.com/Marvisak/VIctory), tested and tuned on
+**Windows 11, NVIDIA RTX 3080 Ti (12 GB VRAM, SM 6.6, Wave32), 64 GB RAM**.
 
 **This repository contains no game files, code or assets.** You need your own
 copy of the title. It is not affiliated with or endorsed by the title's
 developer or publisher.
 
-## What is included on `exo-0b0074e`
+## Verified Status (`exo-0b0074e`, 2026-11-25)
+
+| Area | Status on RTX 3080 Ti | Notes |
+|---|---|---|
+| Boot & menus | **Working (30.0 fps / 33.3 ms)** | 135 draws/frame, 0 dropped |
+| Water physics & boat buoyancy | **Fixed** | GPU-written ocean height/displacement maps copied back to title memory (`VICTORY_TEXTURE_BACK`, on by default) |
+| Facial & mouth animations | **Fixed** | 16-bit buffer views preserve bits through unsigned views (`#927`); minor edge artifact on one character's lower-left mouth |
+| Wave32 shaders & pipelines | **0 errors / 0 shader failures / 0 refusals** | All 612 release unit tests pass |
+| Open-world frame rate | **3.4–3.6 fps (281–295 ms/frame)** | Bottleneck: 175 ms GPU (indirect clamps/barriers) + 90 ms CPU prep |
+| Asset / texture streaming | **Slow (~7,174 queued slots)** | Next target: async heap texture worker (`#1007`) & dirty-gen digests (`#1018`) |
+| Stability | **No device loss / no crashes** | 64 KiB CBV clamp (`#911`) + Shadow `SNAPS` UAF fix (`#936`) |
+
+See [docs/exo-rtx3080ti-notes.md](docs/exo-rtx3080ti-notes.md) for the full
+measured millisecond breakdown, switch list, and upcoming NVIDIA PR roadmap.
+
+## What is Included on `exo-0b0074e`
 
 Built on `fxceless/victory-fork` `main` (`0b0074e`):
 
-- **Water buoyancy & CPU-read texture copy-back** ([Geckomacabre/vx-layer](https://github.com/Geckomacabre/vx-layer) `eee5667`, `VICTORY_TEXTURE_BACK`, on by default): copies GPU-written ocean height/displacement textures (`256x256` `R32_FLOAT` / `R32G32_FLOAT`, `64x64` `R32G32_FLOAT`, `128x128` `R16G16_UINT`) back into title memory in console-tiled layout so boats float and drive properly.
+- **Water buoyancy & CPU-read texture copy-back** ([Geckomacabre/vx-layer](https://github.com/Geckomacabre/vx-layer) `eee5667`, `VICTORY_TEXTURE_BACK`, on by default): copies GPU-written ocean height/displacement textures (`256x256` `R32_FLOAT` / `R32G32_FLOAT`, `64x64` `R32G32_FLOAT`, `128x128` `R16G16_UINT`) back into title memory in console-tiled layout (`victory_formats::Layout::tile`).
 - **Facial & mouth animations** (`fxceless/victory-fork#927`): preserves 16-bit buffer view bits through unsigned integer views so the facial animation compute graph animates mouths instead of outputting zeros.
 - **Wave32 shaders round 2** (`fxceless/victory-fork#993`, includes `#854`): paired Wave64-on-Wave32 lowering, geometry shaders, console-accurate loops, lighter Wave64 forms, mesh+pixel linking, and dispatches past 65,535 groups in X.
 - **Pipeline & staging fixes** ([Geckomacabre/vx-layer](https://github.com/Geckomacabre/vx-layer) `cf815a8`, `5492b73`, `b2d82ab`): disables blending on integer render targets, rebuilds pipelines for mismatched bound target formats, and rechecks staging time/byte budgets.
 - **Performance, streaming, visuals & stability**: `#992` (64-thread coalesced `CARD_COMPARE`), `#936` (Shadow `SNAPS` use-after-free fix), `#911` (64 KiB CBV clamp for NVIDIA), `#907` (early depth stencil), `#903` (`VICTORY_PLACED_TEX`), `#374` (BC7 rainbow-block fix), `#896` (streaming bursts), `#892` (screen-pass workers), `#886` & `#855` (DirectStorage), `#868` (WC copy-back switch), `#798` (Series S profile), `#768`, `#764`, `#765`, `#644`, `#632`, `#559`, `#510`, `#577` (keyboard + mouse), and `#845`.
+
+## Recommended RTX 3080 Ti Runtime Switches
+
+```bat
+set VICTORY_ASYNC_SUBMIT=1
+set VICTORY_QUEUE2=1
+set VICTORY_PLACED_TEX=1
+set VICTORY_LEVELS_ON_DEMAND=1
+set VICTORY_EARLY_TEXTURES_MS=120
+set VICTORY_WIDE_TEXTURES=1
+set VICTORY_INDIRECT_WINDOW=1
+set VICTORY_CARD_REHASH_RUNS=1
+set VICTORY_CARD_BUFFERS_MIN_MB=1
+set VICTORY_CARD_BUFFERS_MB=1024
+set VICTORY_TEXTURE_NO_WAIT=1
+set VICTORY_PIPELINE_WAIT_MS=24
+set VICTORY_JOIN_COPIES=1
+```
+
+> **Note:** Do **not** enable `VICTORY_CARD_FETCH_INFLIGHT=1` alongside `VICTORY_QUEUE2=1` + `VICTORY_INDIRECT_WINDOW=1` (causes severe GPU stalls / device loss). Keep `VICTORY_SKIP_WC_COMPARE=1` off for normal gameplay.
+
+## Credits
+
+All credit for the underlying compatibility layer, shader translator, and community fixes belongs to:
+- **[Marvisak/VIctory](https://github.com/Marvisak/VIctory)** and its contributors (GPL-3.0-or-later)
+- **[fxceless/victory-fork](https://github.com/fxceless/victory-fork)** and all community PR authors
+- **[Geckomacabre/vx-layer](https://github.com/Geckomacabre/vx-layer)** (`eee5667`, `5492b73`, `cf815a8`, `b2d82ab`)
 
 ---
 
