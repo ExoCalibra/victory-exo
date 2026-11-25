@@ -976,6 +976,8 @@ mod tests {
         let seen = Mutex::new(HashSet::new());
         let mut tally = Tally::default();
         let mut checks = Checks {
+            names: Vec::new(),
+            current: None,
             keep: None,
             validator: None,
             host: None,
