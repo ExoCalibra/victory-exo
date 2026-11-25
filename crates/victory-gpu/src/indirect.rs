@@ -73,12 +73,18 @@ static const uint SPLIT = 4u;
 // round for each record of a window, and in memory the CPU maps (where the
 // budget was, and is with VICTORY_INDIRECT_CARD_BUDGET=0) every atomic
 // crosses the bus on a card of its own.
+#ifndef SINGLE_RECORD
 groupshared uint costs[64];
 groupshared uint fits[64];
 groupshared uint largest_asked;
 groupshared uint all_asked;
+#endif
 [RootSignature(RS)]
+#ifdef SINGLE_RECORD
+[numthreads(1, 1, 1)]
+#else
 [numthreads(64, 1, 1)]
+#endif
 void main(uint3 id : SV_DispatchThreadID, uint gi : SV_GroupIndex) {
     uint eff_count = records;
     bool ahead = (has_count & 2u) != 0;
@@ -100,10 +106,12 @@ void main(uint3 id : SV_DispatchThreadID, uint gi : SV_GroupIndex) {
     uint asked = 0;
     uint2 draw_counts = uint2(0, 0);
     uint3 groups = uint3(0, 0, 0);
+#ifndef SINGLE_RECORD
     if (gi == 0) {
         largest_asked = 0;
         all_asked = 0;
     }
+#endif
     if (active && kind <= 1) {
         // Draws: vertex or index count, then instances.
         uint2 want = src_args.Load2(src_at);
@@ -155,6 +163,27 @@ void main(uint3 id : SV_DispatchThreadID, uint gi : SV_GroupIndex) {
         cost = g.x * g.y * g.z * 128u;
         groups = g;
     }
+#ifdef SINGLE_RECORD
+    bool over = false;
+    if (cost != 0) {
+        uint before;
+        budget.InterlockedOr(0, 0, before);
+        [allow_uav_condition]
+        while (before < BUDGET) {
+            uint next = min(BUDGET - before, cost) + before;
+            uint prev;
+            budget.InterlockedCompareExchange(0, before, next, prev);
+            if (prev == before) break;
+            before = prev;
+        }
+        over = before >= BUDGET || BUDGET - before < cost;
+    }
+    if (active && kind > 3) {
+        uint was;
+        budget.InterlockedMax(4, asked, was);
+        budget.InterlockedAdd(8, min(asked, 1u << 24), was);
+    }
+#else
     costs[gi] = cost;
     GroupMemoryBarrierWithGroupSync();
     if (active && kind > 3) {
@@ -208,6 +237,8 @@ void main(uint3 id : SV_DispatchThreadID, uint gi : SV_GroupIndex) {
         budget.InterlockedMax(4, largest_asked, was);
         budget.InterlockedAdd(8, all_asked, was);
     }
+    bool over = active && fits[gi] == 0;
+#endif
     if (!active) {
         // The host runs every record of a split dispatch (the count is the
         // clamp's alone): those past the count run empty.
@@ -218,7 +249,6 @@ void main(uint3 id : SV_DispatchThreadID, uint gi : SV_GroupIndex) {
         }
         return;
     }
-    bool over = fits[gi] == 0;
     if (kind <= 1) {
         if (over) {
             draw_counts = uint2(0, 0);
@@ -282,6 +312,32 @@ fn make() -> windows::core::Result<Clamp> {
 
 fn make_for(device: &ID3D12Device) -> windows::core::Result<Clamp> {
     make_from(device, SOURCE)
+}
+
+fn make_single(device: &ID3D12Device) -> windows::core::Result<Clamp> {
+    make_from(device, &format!("#define SINGLE_RECORD\n{SOURCE}"))
+}
+
+/// Opt-in specialization for the indirect calls that still clamp by themselves.
+fn clamp_for(records: u32) -> Option<&'static Clamp> {
+    static SINGLE: std::sync::OnceLock<Option<Clamp>> = std::sync::OnceLock::new();
+    if records == 1
+        && let Some(single) = SINGLE.get_or_init(|| {
+            if std::env::var_os("VICTORY_INDIRECT_SINGLE").is_none_or(|v| v != "1") {
+                return None;
+            }
+            match make_single(&host()?.device) {
+                Ok(c) => Some(c),
+                Err(e) => {
+                    tracing::warn!(error = %e, "single-record argument clamp unavailable");
+                    None
+                }
+            }
+        })
+    {
+        return Some(single);
+    }
+    clamp()
 }
 
 /// The clamp compiled from `source` (ours, or in the benchmark the one it
@@ -404,7 +460,7 @@ pub(crate) fn bound(
     validate_layout(spec, src.1, count.map(|(_, off)| off))?;
     // What the clamped records take (a split dispatch's are bigger).
     let bytes = scratch_bytes(spec)?;
-    let (c, budget, dst) = (clamp()?, list.budget()?, list.indirect_scratch(bytes)?);
+    let (c, budget, dst) = (clamp_for(spec.2)?, list.budget()?, list.indirect_scratch(bytes)?);
     clamp_into(list, c, &dst, budget, src, count, spec, false).then_some(dst)
 }
 
@@ -425,7 +481,7 @@ pub(crate) fn bound_ahead(
 ) -> Option<ID3D12Resource> {
     validate_layout(spec, src.1, None)?;
     let bytes = scratch_bytes(spec)?;
-    let (c, budget, dst) = (clamp()?, list.budget()?, list.indirect_scratch(bytes)?);
+    let (c, budget, dst) = (clamp_for(spec.2)?, list.budget()?, list.indirect_scratch(bytes)?);
     clamp_into(list, c, &dst, budget, src, None, spec, true).then_some(dst)
 }
 
