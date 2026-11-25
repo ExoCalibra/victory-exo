@@ -1,3 +1,25 @@
+# victory-exo (NVIDIA Wave32 Fork — `exo-1053`)
+
+An NVIDIA Wave32 integration and benchmarking fork of
+[fxceless/victory-fork](https://github.com/fxceless/victory-fork) and
+[Marvisak/VIctory](https://github.com/Marvisak/VIctory), tested and tuned on
+**Windows 11, NVIDIA RTX 3080 Ti (12 GB VRAM, SM 6.6, Wave32), 64 GB RAM**.
+
+**This repository contains no game files, code or assets.** You need your own
+copy of the title. It is not affiliated with or endorsed by the title's
+developer or publisher.
+
+## What is Included on `exo-1053`
+
+Built on `fxceless/victory-fork#1053` (over `ca8829f`, NVIDIA RTX 5070 hardware-verified **-45% frame time, -48% GPU list time, -100% shadow RwLock wait, -53% `execute_indirect`**, plus `#188` Series S upscaler + MPO plane composition):
+
+- **Water buoyancy + stale-write guard** (`fxceless/victory-fork#999`, `VICTORY_TEXTURE_BACK` on by default): copies GPU-written ocean height/displacement textures back into title memory in console-tiled layout, with per-allocation `Ticket` invalidation so freed/remapped cutscene textures cannot be overwritten.
+- **Facial & mouth animations** (`#927`) & **Wave32 shaders round 2** (`#993`, includes `#854`) & **RTX code-table fix** (`#1006`).
+- **Frame rate & streaming stack**: `#1053` (lock-free `HostHeap::mirror`, `victory-reaper` COM drop thread, `XMemMapPhysicalPagesScatter` lock hoisting + 64 KiB fast path, 2-slot `indirect_window_scratch` ring + targeted UAV barriers, `VICTORY_ASYNC_PRESENT=1` 2nd MPO plane), `#1044` (physical-core DirectStorage), `#1058` (in-place small buffer copies), `#1032` (`-20 ms` copy-back with `VICTORY_COPY_PLAIN=1`), `#1031` + `#1023` (bounded texture queue + resident mips), `#1020` (`MONITORX`/`MWAITX` park), `#1005` (xmem unmap notify), `#992` (64-thread coalesced `CARD_COMPARE`).
+- **Visuals, controls & stability**: `vx-layer@cf815a8` (no integer RT blend), `#911` (64 KiB CBV clamp for NVIDIA), `#903` (`VICTORY_PLACED_TEX`), `#374` (BC7 rainbow-block fix), `#892`, `#886`, `#855`, `#868`, `#798` (Series S), and `#577` (keyboard + mouse).
+
+---
+
 # VIctory fork (work in progress)
 
 A work-in-progress fork of [VIctory](https://github.com/Marvisak/VIctory), a
