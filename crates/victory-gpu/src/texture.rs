@@ -2019,6 +2019,7 @@ mod title_memory_tests {
         let (buffer, data) = host.upload_buffer(size).expect("upload buffer");
         let staging = super::Staging {
             buffer,
+            gpu_detile: None,
             #[cfg(feature = "diagnostics")]
             size,
             data,
