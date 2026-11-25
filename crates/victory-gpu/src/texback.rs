@@ -32,9 +32,9 @@ fn kinds() -> &'static [(u64, u32, u32)] {
     KINDS.get_or_init(|| {
         const DEFAULT: &str = "256x256f41,256x256f16,64x64f16,128x128f36";
         let list = match std::env::var("VICTORY_TEXTURE_BACK").as_deref() {
-            Ok("1") => DEFAULT.to_owned(),
+            Ok("0") => String::new(),
+            Ok("1") | Err(_) => DEFAULT.to_owned(),
             Ok(spec) => spec.to_owned(),
-            Err(_) => String::new(),
         };
         let kinds: Vec<(u64, u32, u32)> = list
             .split(',')
