@@ -3857,6 +3857,14 @@ fn late_line(frames: f64) {
             bytes / (1 << 20) as f64
         );
     }
+    {
+        let found = [0, 1].map(|i| crate::shadow::LOOKUPS[i].swap(0, Ordering::Relaxed) as f64 / frames);
+        tracing::info!(
+            "asks for a buffer's host copy per frame: {:.0} answered from the asking thread's memory of them, {:.0} from the tables (VICTORY_LOOKUP_CACHE)",
+            found[0],
+            found[1]
+        );
+    }
     if crate::shadow::refresh_compare() {
         let [read, taken, runs] = crate::shadow::compared_stats().map(|n| n as f64 / frames);
         tracing::info!(
