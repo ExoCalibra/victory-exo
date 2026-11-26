@@ -24,7 +24,9 @@ developer or publisher.
   - `Marvisak/VIctory#2648` (**chaseb64**) — BCPack: leave remaining payload bytes for unfinished lanes (BC7 corruption fix).
   - `Marvisak/VIctory#2735` (**brainbudt**) — +27% faster BC7 BCPack decoding (+14–15% BC1/BC4).
   - `Marvisak/VIctory#2736` (**brainbudt**) — up to 2.4× faster GFX10 tiled texture detiling/tiling.
-- **Shader accuracy & controls:**
+- **Shader accuracy, pre-build & controls:**
+  - `fxceless/victory-fork#1226` (**regiumlepidi** / upstream `13f91ca`) — offline `victory translate --cache --pipelines` shader & D3D12 PSO pre-builder.
+  - `Marvisak/VIctory#2823` (**xKineticK**) — `neg` input modifier flips a NaN's sign too (`fneg` XOR sign bit).
   - `Marvisak/VIctory#2406` (**makmatvey**) — `s_cbranch_vccz`/`vccnz` tests raw `VCC`, not `VCC & EXEC`.
   - `Marvisak/VIctory#606` (**upipibi**) — `ds_swizzle_b32` rotate (`0xC000..0xE000`) and FFT (`0xE000..=0xFFFF`) modes.
   - Local fix in `gameinput.rs` — clear stale `SIZING` flag and re-capture cursor on any client-area left-click when focused.
