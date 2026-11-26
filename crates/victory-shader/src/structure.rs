@@ -1324,20 +1324,25 @@ impl<'a> Lanes<'a> {
     }
 
     fn branch(&mut self, inst: &Inst) -> Bool {
-        let exec = self.exec(inst);
         match inst.name() {
-            "s_cbranch_execz" => self.b.not(exec),
-            "s_cbranch_execnz" => exec,
+            "s_cbranch_execz" => {
+                let exec = self.exec(inst);
+                self.b.not(exec)
+            }
+            "s_cbranch_execnz" => self.exec(inst),
+            // Hardware tests the raw VCC register, not VCC & EXEC. Inactive
+            // lanes can leave bits in VCC (an earlier compare, or a scalar
+            // write); masking with EXEC would flip the branch when those are
+            // the only bits set.
             n @ ("s_cbranch_vccz" | "s_cbranch_vccnz") => {
                 let vcc = match self.key(|r| inst.read(r), VCC) {
                     Some(k) => self.mask(k).0,
                     None => Bool::FALSE,
                 };
-                let any = self.b.and(vcc, exec);
                 if n.ends_with("nz") {
-                    any
+                    vcc
                 } else {
-                    self.b.not(any)
+                    self.b.not(vcc)
                 }
             }
             n => {

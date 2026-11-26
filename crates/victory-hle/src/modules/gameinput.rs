@@ -718,6 +718,8 @@ pub(crate) mod cursor {
     /// A click in the title window captures. Buttons held while it is
     /// captured are no shots until they are let go (`host`).
     pub(crate) fn click() {
+        // A client-area click proves we are no longer in a size/move modal loop.
+        SIZING.store(false, Ordering::Relaxed);
         capture();
     }
 
@@ -1317,7 +1319,7 @@ mod host {
         XInputSetState,
     };
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        ClipCursor, CreateWindowExW, DefWindowProcW, DispatchMessageW, GetClientRect,
+        ClipCursor, CreateWindowExW, DefWindowProcW, DispatchMessageW, GetClientRect, GetCursorPos,
         GetForegroundWindow, GetMessageW, GetWindowThreadProcessId, HWND_MESSAGE, MSG,
         RegisterClassW, WM_INPUT, WNDCLASSW,
     };
@@ -1396,6 +1398,7 @@ mod host {
         fn cursor(&mut self, focus: bool) {
             cursor::FOCUSED.store(focus, Ordering::Relaxed);
             if !focus {
+                cursor::size_move(false);
                 cursor::release();
             } else if !self.was_focused {
                 // SAFETY: plain queries.
@@ -1404,6 +1407,27 @@ mod host {
                     .any(|vk| unsafe { GetAsyncKeyState(i32::from(vk)) } < 0);
                 if cursor::captures_on_focus(self.was_focused, focus, button_down) {
                     cursor::capture();
+                }
+            }
+            // Fallback re-capture: if the title window has focus and the cursor is
+            // currently free, a left-click anywhere inside the client area re-hooks it
+            // even if a WndProc/modal loop swallowed WM_LBUTTONDOWN or WM_EXITSIZEMOVE.
+            if focus && !cursor::captured() && !cursor::sizing() {
+                unsafe {
+                    if GetAsyncKeyState(0x01) < 0 {
+                        let hwnd = GetForegroundWindow();
+                        let mut client = RECT::default();
+                        let mut pt = POINT::default();
+                        if GetClientRect(hwnd, &mut client) != 0 && GetCursorPos(&mut pt) != 0 {
+                            let mut tl = POINT { x: client.left, y: client.top };
+                            let mut br = POINT { x: client.right, y: client.bottom };
+                            ClientToScreen(hwnd, &mut tl);
+                            ClientToScreen(hwnd, &mut br);
+                            if pt.x >= tl.x && pt.x < br.x && pt.y >= tl.y && pt.y < br.y {
+                                cursor::capture();
+                            }
+                        }
+                    }
                 }
             }
             self.was_focused = focus;

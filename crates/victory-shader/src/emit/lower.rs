@@ -56,6 +56,8 @@ mod guarded;
 /// emitter's state.
 #[path = "rings.rs"]
 mod rings;
+#[path = "swizzle.rs"]
+mod swizzle;
 
 type Why = &'static str;
 
@@ -4525,10 +4527,10 @@ impl<'a> Lower<'a> {
             _ => None,
         };
         if name == "ds_swizzle_b32" {
-            // Bit 15 set: each lane of a quad picks a lane of it; else lanes
-            // of each group of 32 combine their index with and/or/xor masks.
-            let quad = offset & 0x8000 != 0
-                || offset & 0x1C == 0x1C && offset & 0x380 == 0 && offset >> 10 & 0x1F < 4;
+            let (fft, rotate) = (offset >= 0xE000, (0xC000..0xE000).contains(&offset));
+            let quad = !(fft || rotate)
+                && (offset & 0x8000 != 0
+                    || offset & 0x1C == 0x1C && offset & 0x380 == 0 && offset >> 10 & 0x1F < 4);
             // Mesh: host quads are threads 4n..4n+3 of a 1D group, as the
             // console's, so quad-local swizzles read through quad operations.
             let mesh_quad = self.s.mesh.is_some() && quad;
@@ -4539,7 +4541,9 @@ impl<'a> Lower<'a> {
             let x = self.vgprs(inst, addr.as_ref().ok_or("a swizzle source")?, 1)?[0];
             let lane = self.lane_index();
             let k = |l: &mut Self, v: u32| l.s.m.i32(v);
-            let src = if offset & 0x8000 != 0 {
+            let src = if fft || rotate {
+                self.ds_swizzle_fft_or_rotate(c, lane, offset, fft)?
+            } else if offset & 0x8000 != 0 {
                 let (three, one) = (k(self, 3), k(self, 1));
                 let sel = self.s.m.bin(c, Bin::And, lane, three);
                 let sh = self.s.m.bin(c, Bin::Shl, sel, one);
