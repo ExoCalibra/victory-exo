@@ -1,4 +1,4 @@
-# victory-exo (NVIDIA Wave32 Fork — `exo-1053`)
+# victory-exo (NVIDIA Wave32 Fork — `exo-1053-fast`)
 
 An NVIDIA Wave32 integration and benchmarking fork of
 [fxceless/victory-fork](https://github.com/fxceless/victory-fork) and
@@ -8,6 +8,26 @@ An NVIDIA Wave32 integration and benchmarking fork of
 **This repository contains no game files, code or assets.** You need your own
 copy of the title. It is not affiliated with or endorsed by the title's
 developer or publisher.
+
+## Additions on `exo-1053-fast` (All Credits Preserved)
+
+- **GPU & CPU frame-rate stack (`fxceless/victory-fork`):**
+  - `fxceless/victory-fork#1227` (**KyleS98**) — 3-step send-and-hash batching (`VICTORY_CARD_SYNC_BATCH`): all copies, one state transition, all hash passes.
+  - `fxceless/victory-fork#1171` (**KyleS98**) — indirect records gathered by runs inside lists (`VICTORY_INDIRECT_GATHER_RUNS`).
+  - `fxceless/victory-fork#1220` (**nicolasveilleux**) — skip untouched zero runs during descriptor page sync.
+  - `fxceless/victory-fork@de4146a` (**fxceless**) — `<256 B` upload fills copied in place (`VICTORY_FILLS_PLAIN=1`).
+  - `fxceless/victory-fork@84c5dc0` (**fxceless**) — direct index lookup for submission copy steps (`VICTORY_STEP_INDEX=1`).
+  - `fxceless/victory-fork#1237` (**KyleS98** / **fxceless** `@32be36d`) + `#1245` (**UwUCammie**) — per-thread buffer lookup cache (`VICTORY_LOOKUP_CACHE=1`) with registration generation invalidation.
+- **Asset streaming, visuals & textures:**
+  - `fxceless/victory-fork#1246` (**Exopus-0x65f7ad0**) — serve looked-at and fresh texture slots in turns with unmapped backoff up to 20s.
+  - `fxceless/victory-fork#1093` (**m335671**) — ambient indirect light stand-in while rays do not run (`VICTORY_AMBIENT`).
+  - `Marvisak/VIctory#2648` (**chaseb64**) — BCPack: leave remaining payload bytes for unfinished lanes (BC7 corruption fix).
+  - `Marvisak/VIctory#2735` (**brainbudt**) — +27% faster BC7 BCPack decoding (+14–15% BC1/BC4).
+  - `Marvisak/VIctory#2736` (**brainbudt**) — up to 2.4× faster GFX10 tiled texture detiling/tiling.
+- **Shader accuracy & controls:**
+  - `Marvisak/VIctory#2406` (**makmatvey**) — `s_cbranch_vccz`/`vccnz` tests raw `VCC`, not `VCC & EXEC`.
+  - `Marvisak/VIctory#606` (**upipibi**) — `ds_swizzle_b32` rotate (`0xC000..0xE000`) and FFT (`0xE000..=0xFFFF`) modes.
+  - Local fix in `gameinput.rs` — clear stale `SIZING` flag and re-capture cursor on any client-area left-click when focused.
 
 ## What is Included on `exo-1053`
 
