@@ -3021,11 +3021,13 @@ fn twin_uav(
 /// a constant view, so nothing it can read is lost.
 fn constant_view_size(size: u32) -> u32 {
     const MOST: u32 = 4096 * 16;
-    let sized = size.max(1).next_multiple_of(256);
+    let sized = size.next_multiple_of(256);
     if sized > MOST {
         once!(size, "a constant buffer view over 64 KiB, made 64 KiB (the host takes no more)");
         return MOST;
     }
+    // A view of no bytes stays one: a shader reads zeros through it, as on the
+    // console (fxceless/victory-fork#1260).
     sized
 }
 
@@ -3444,6 +3446,8 @@ mod tests {
     /// most the host takes (a larger size removes the device on NVIDIA).
     #[test]
     fn constant_views_are_at_most_64_kib() {
+        assert_eq!(constant_view_size(0), 0);
+        assert_eq!(constant_view_size(1), 256);
         assert_eq!(constant_view_size(16), 256);
         assert_eq!(constant_view_size(256), 256);
         assert_eq!(constant_view_size(65_536), 65_536);
