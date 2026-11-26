@@ -5819,14 +5819,16 @@ impl<'a> Lower<'a> {
         // batch records, mesh headers and instance transforms this way, so
         // it passed no meshlet and every indirect mesh draw ran empty.
         // The host's table of strides by heap slot tells a buffer view
-        // (not 0) from anything else, which is still read as a constant
-        // buffer; only the load that fits the slot runs.
+        // (stride bits not 0) from a constant buffer view (`SLOT_CONSTANT_BUFFER`);
+        // only the load that fits the slot runs, and anything else reads zeros.
         let picked = match kind {
             None => self.slot_stride(src)?,
             Some(_) => None,
         };
-        if let Some(stride) = picked {
+        if let Some(entry) = picked {
             let zero = self.s.m.i32(0);
+            let bits = self.s.m.i32(super::shader::SLOT_STRIDE_BITS);
+            let stride = self.s.m.bin(self.cur, Bin::And, entry, bits);
             let is_buffer = self.s.m.cmp(self.cur, pred::NE, stride, zero);
             let at = self.begin_guarded(Some(is_buffer));
             let h = self.handle(site, src, false, (11, 0))?;
@@ -5850,7 +5852,8 @@ impl<'a> Lower<'a> {
                 raw.push((x, zero));
             }
             let raw = self.end_guarded(at, &raw);
-            let other = self.s.m.cmp(self.cur, pred::EQ, stride, zero);
+            let constant = self.s.m.i32(super::shader::SLOT_CONSTANT_BUFFER);
+            let other = self.s.m.cmp(self.cur, pred::EQ, entry, constant);
             let at = self.begin_guarded(Some(other));
             let h = self.handle(site, src, false, (13, 0x1_0000))?;
             let mut both = Vec::new();
@@ -10148,11 +10151,13 @@ impl<'a> Lower<'a> {
         // element's byte. (Also tells the host this shader reads such
         // buffers.)
         let mut index = index;
-        if let Some(stride) = self.slot_stride(src)?
+        if let Some(entry) = self.slot_stride(src)?
             && let Some(element) = index
             && !typed
             && used.is_none()
         {
+            let bits = self.s.m.i32(super::shader::SLOT_STRIDE_BITS);
+            let stride = self.s.m.bin(c, Bin::And, entry, bits);
             let at = self.s.m.bin(c, Bin::Mul, element, stride);
             off = self.s.m.bin(c, Bin::Add, at, off);
             index = None;

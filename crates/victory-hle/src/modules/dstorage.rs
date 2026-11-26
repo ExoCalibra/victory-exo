@@ -145,7 +145,12 @@ extern "system" fn open_file(_: Factory, path: *const u16, iid: *const Guid, out
     tracing::info!(path = name, iid = iid_text(iid), "dstorage: file opened");
     // SAFETY: a handle we just opened and nobody else owns.
     let file = unsafe { std::fs::File::from_raw_handle(handle) };
-    let file = Instance::create(Object::new("dstorage file", &FILE_VTABLE), File { file });
+    let file = Instance::create(
+        Object::new("dstorage file", &FILE_VTABLE),
+        File {
+            files: Files::new(file),
+        },
+    );
     WALLS_FILES.lock().unwrap_or_else(|e| e.into_inner()).push((file as usize, kept));
     put(out, file)
 }
@@ -259,7 +264,64 @@ static FACTORY_VTABLE: Methods<16> = Methods([
 // Files.
 
 struct File {
-    file: std::fs::File,
+    files: Files,
+}
+
+/// A file as the workers read it: the handle the title opened, and a handle
+/// for each worker via `ReOpenFile` (Marvisak/VIctory#2904).
+/// `VICTORY_DSTORAGE_HANDLES=0`: every worker reads through the title's handle.
+struct Files {
+    first: std::fs::File,
+    others: Box<[OnceLock<Option<std::fs::File>>]>,
+}
+
+impl Files {
+    fn new(first: std::fs::File) -> Files {
+        static HANDLES: OnceLock<bool> = OnceLock::new();
+        let handles = *HANDLES
+            .get_or_init(|| std::env::var_os("VICTORY_DSTORAGE_HANDLES").is_none_or(|v| v != "0"));
+        Files::with(first, if handles { worker_count() } else { 0 })
+    }
+
+    fn with(first: std::fs::File, others: usize) -> Files {
+        Files {
+            first,
+            others: (0..others).map(|_| OnceLock::new()).collect(),
+        }
+    }
+
+    fn read_at(&self, out: &mut [u8], offset: u64) -> std::io::Result<usize> {
+        let other = match self.others.len() {
+            0 => None,
+            n => self.others[this_thread() % n]
+                .get_or_init(|| reopen(&self.first))
+                .as_ref(),
+        };
+        other.unwrap_or(&self.first).seek_read(out, offset)
+    }
+}
+
+fn this_thread() -> usize {
+    static NEXT: AtomicU32 = AtomicU32::new(0);
+    thread_local! {
+        static NUMBER: usize = NEXT.fetch_add(1, Ordering::Relaxed) as usize;
+    }
+    NUMBER.with(|n| *n)
+}
+
+fn reopen(file: &std::fs::File) -> Option<std::fs::File> {
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::Foundation::{GENERIC_READ, INVALID_HANDLE_VALUE};
+    use windows_sys::Win32::Storage::FileSystem::{FILE_SHARE_READ, ReOpenFile};
+    // SAFETY: a file we hold open.
+    let handle = unsafe { ReOpenFile(file.as_raw_handle(), GENERIC_READ, FILE_SHARE_READ, 0) };
+    if handle == INVALID_HANDLE_VALUE {
+        let error = std::io::Error::last_os_error();
+        tracing::warn!(%error, "dstorage: a file could not be opened again");
+        return None;
+    }
+    // SAFETY: a handle just opened, ours alone.
+    Some(unsafe { std::fs::File::from_raw_handle(handle) })
 }
 
 static FILE_VTABLE: Methods<8> = Methods([
@@ -1148,16 +1210,16 @@ fn read_into(request: &Request, out: &mut [u8]) -> Result<(), HRESULT> {
         return Ok(());
     }
     // SAFETY: a file object we created; the title keeps it open.
-    let file = &unsafe { &*request.source.cast::<Instance<File>>() }
+    let files = &unsafe { &*request.source.cast::<Instance<File>>() }
         .state
-        .file;
+        .files;
     let started = std::time::Instant::now();
     let mut done = 0;
     let result = loop {
         if done == out.len() {
             break Ok(());
         }
-        match file.seek_read(&mut out[done..], request.offset + done as u64) {
+        match files.read_at(&mut out[done..], request.offset + done as u64) {
             Ok(0) => break Err(END_OF_FILE),
             Ok(n) => done += n,
             Err(error) => break Err(from_win32(&error)),

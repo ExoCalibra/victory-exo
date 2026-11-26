@@ -26,6 +26,12 @@ pub const ROOT_CBV_SPACE: u32 = 1;
 pub const SLOT_STRIDES: u8 = 255;
 /// Dwords of the [`SLOT_STRIDES`] buffer: heap indices are clamped to it.
 pub const SLOT_STRIDES_COUNT: u32 = 1 << 21;
+/// A [`SLOT_STRIDES`] dword for a slot that holds a constant buffer view
+/// (its stride bits are 0). Shaders read a slot as a constant buffer only when
+/// marked (DexNom#66), avoiding GPU page faults on texture/empty slots.
+pub const SLOT_CONSTANT_BUFFER: u32 = 1 << 31;
+/// The stride bits of a [`SLOT_STRIDES`] dword.
+pub const SLOT_STRIDE_BITS: u32 = SLOT_CONSTANT_BUFFER - 1;
 
 /// Title memory by address (`resource::MEMORY`): console code reads and
 /// writes through raw 40-bit addresses it takes from root constants,
