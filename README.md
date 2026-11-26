@@ -1,3 +1,24 @@
+# victory-exo (NVIDIA Wave32 Fork — `exo-006c353`)
+
+An NVIDIA Wave32 integration and benchmarking fork of
+[fxceless/victory-fork](https://github.com/fxceless/victory-fork) and
+[Marvisak/VIctory](https://github.com/Marvisak/VIctory), tested and tuned on
+**Windows 11, NVIDIA RTX 3080 Ti (12 GB VRAM, SM 6.6, Wave32), 64 GB RAM**.
+
+**This repository contains no game files, code or assets.** You need your own
+copy of the title. It is not affiliated with or endorsed by the title's
+developer or publisher.
+
+## What is Included on `exo-006c353`
+
+Built on `fxceless/victory-fork` `main` (`006c353` — includes `#999` water readback + stale-write guard, `#911` 64 KiB CBV cap, `#1014` `VICTORY_CARD_HASH_WIDE=1`, 4-dword scalar buffer loads via `VICTORY_SHADER_OPT=64`, `VICTORY_GATHER_BY_COPY=1`, `VICTORY_LIGHT_REFRESH=1`, `VICTORY_STEP_INDEX=1`, `VICTORY_FILLS_PLAIN=1`, `VICTORY_BVH_NO_HIT=1`, `VICTORY_WINDOW_UPLOAD=1`):
+
+- **GPU Shaders, Wave32 & Visuals:** `#1126` (DXIL optimizer: LICM, LDS forwarding, barrier dedup), `#993` (Wave32 round 2, includes `#854`), `#927` (mouth/face animations), `#1112` (+42 shaders, fixes hair), `#1006` (RTX code-table offset), `vx-layer` `cf815a8` (no int RT blend) + `5492b73` (pipeline target format variants), `#374` (BC7 rainbow fix), `#1170` (restore texture state after water readback).
+- **Cutscene/World Asset & LOD Loading:** `#1007` (`VICTORY_HEAP_WORKER=1` async background texture worker), `#1157` (texture staging outside global lock), `#1108` (`bcpack::decode` thread-local scratch), `#1103` (skip redundant `MEM_COMMIT`), `#1044` (physical-core DirectStorage), `#1031` + `#1023` (bounded texture queue + resident mips), `#1078` (`VICTORY_TEXTURE_SHORT_HOLD=1`), `#903` (`VICTORY_PLACED_TEX`).
+- **CPU Preparing, Copy-Back & Stability:** `#1188` (`VICTORY_BACK_QUIET=1` no fake title writes from copy-backs), `#1164` (4/16 KiB granular card-buffer readback), `#1146` (`VICTORY_LAND_ASIDE=1` + descriptor heap lock split), `#1138` (`VICTORY_HEAP_RESCAN_SPREAD=1`), `#1137` (`VICTORY_FEED_ONE_CALL=1`), `#1066` (`VICTORY_WIDE_MERGE=1`), `#1094` (word zero-mask skip), `#1172`, `#1212`, `#1120`, `#1127` (`VICTORY_STRETCH=1`), `#1020` (`MONITORX`/`MWAITX` park), `#1101` (Display-only driver watch), `#577` (keyboard + mouse).
+
+---
+
 # VIctory fork (work in progress)
 
 A work-in-progress fork of [VIctory](https://github.com/Marvisak/VIctory), a
