@@ -1,7 +1,16 @@
 //! `ds_swizzle_b32` rotate (0xC000..0xE000) and FFT (0xE000..=0xFFFF) modes (Marvisak/VIctory#606).
 
-use super::{Bin, Lower, Why};
+use super::{Bin, Lower, Rmw, Why};
 use crate::emit::bitcode::{Attr, V, pred};
+use crate::emit::shader::flags;
+use crate::native::StageIo;
+
+/// Whether programs with console lanes in groups of several host waves take their console
+/// threads from a group counter (`ticket`, fxceless/victory-fork#1261 / #1243).
+/// `VICTORY_THREAD_TICKET=0`: the flat id of the wave's first lane rounded down, as before.
+pub(super) fn ticket_on() -> bool {
+    std::env::var_os("VICTORY_THREAD_TICKET").is_none_or(|v| v != "0")
+}
 
 impl<'a> Lower<'a> {
     pub(super) fn ds_swizzle_fft_or_rotate(
@@ -84,5 +93,70 @@ impl<'a> Lower<'a> {
         let r = self.s.m.select(c, inf, big, bits);
         let r = self.s.m.select(c, nan, zero, r);
         self.as_float(r)
+    }
+
+    /// With `halves` or `ticket`: the first console thread of this host wave (0, w, 2w, ... for
+    /// host waves of w lanes; in the paired form 0, 64, 128, ...). A GPU need not give a host
+    /// wave consecutive thread indices (NVIDIA's 8 x 8 groups, the 16 x 2 tiles of 2-D groups,
+    /// fxceless/victory-fork#1243 / #1261), so each wave takes its threads from an LDS counter
+    /// instead: every thread zeroes it, the group meets, and each wave's first active lane adds
+    /// for the wave. Full waves take the next block of w from the low 16 bits; partial waves
+    /// take their lane count from the high 16 bits past the full blocks.
+    pub(super) fn wave_base(&mut self) -> Option<V> {
+        let slot = self.halves.or(self.ticket)?;
+        if let Some(v) = self.wave_base {
+            return Some(v);
+        }
+        let (e, i32t) = (self.s.entry, self.s.t.i32);
+        let lds = self.s.lds();
+        let k = self.s.m.i32(slot);
+        let ptr = self.s.m.element(e, lds, k);
+        let zero = self.s.m.i32(0);
+        self.s.m.store(e, ptr, zero);
+        self.group_sync(e);
+        let base = if self.twin.is_some() {
+            let lane = self.s.op(e, "waveGetLaneIndex", Attr::ReadOnly, i32t, 111, &[]);
+            let first = self.s.m.cmp(e, pred::EQ, lane, zero);
+            let step = self.s.m.i32(64);
+            let add = self.s.m.select(e, first, step, zero);
+            let ptr = self.s.m.element(e, lds, k);
+            let old = self.s.m.atomic(e, Rmw::Add, ptr, add);
+            let base = self.s.op(e, "waveReadLaneFirst.i32", Attr::NoUnwind, i32t, 118, &[old]);
+            self.wave_rank = Some(lane);
+            base
+        } else {
+            let w = self.s.wave_size.unwrap_or(32);
+            let group: u32 = self.s.threads.map_or(w, |t| t.iter().product());
+            let one = self.s.m.i32(1);
+            let (sum, unsigned) = (self.s.m.i8(0), self.s.m.i8(1));
+            let count = self.s.op(e, "waveActiveOp.i32", Attr::NoUnwind, i32t, 119, &[one, sum, unsigned]);
+            let rank = self.s.op(e, "wavePrefixOp.i32", Attr::NoUnwind, i32t, 121, &[one, sum, unsigned]);
+            let kw = self.s.m.i32(w);
+            let full = self.s.m.cmp(e, pred::EQ, count, kw);
+            let first = self.s.m.cmp(e, pred::EQ, rank, zero);
+            let sixteen = self.s.m.i32(16);
+            let high = self.s.m.bin(e, Bin::Shl, count, sixteen);
+            let take = self.s.m.select(e, full, kw, high);
+            let add = self.s.m.select(e, first, take, zero);
+            let ptr = self.s.m.element(e, lds, k);
+            let old = self.s.m.atomic(e, Rmw::Add, ptr, add);
+            let found = self.s.op(e, "waveReadLaneFirst.i32", Attr::NoUnwind, i32t, 118, &[old]);
+            let low_mask = self.s.m.i32(0xffff);
+            let low = self.s.m.bin(e, Bin::And, found, low_mask);
+            let past = self.s.m.bin(e, Bin::LShr, found, sixteen);
+            let blocks = self.s.m.i32(group / w * w);
+            let tail = self.s.m.bin(e, Bin::Add, blocks, past);
+            let base = self.s.m.select(e, full, low, tail);
+            self.wave_rank = Some(rank);
+            base
+        };
+        self.s.flags |= flags::WAVE_OPS;
+        // a counter in the program's own LDS (the paired form's, when it has no dword to
+        // spare): every wave has its base before any thread runs the program
+        if matches!(self.x.native.io, StageIo::Cs(cs) if slot < cs.lds_bytes() / 4) {
+            self.group_sync(e);
+        }
+        self.wave_base = Some(base);
+        Some(base)
     }
 }
