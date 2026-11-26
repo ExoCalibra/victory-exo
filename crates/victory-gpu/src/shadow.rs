@@ -4284,17 +4284,24 @@ fn lookup(address: u64, len: u64, any: bool) -> Option<Arc<Shadow>> {
         }
         f.1.get(&(address, len, any)).and_then(std::sync::Weak::upgrade)
     });
-    if let Some(shadow) = found {
-        LOOKUPS[0].fetch_add(1, Ordering::Relaxed);
-        if shadow.window {
-            // As `loose` notes an ask of a window it hands out.
-            shadow.used.store(crate::host::moment(), Ordering::Relaxed);
-            shadow.asked[0].fetch_min(address, Ordering::Relaxed);
-            shadow.asked[1].fetch_max(address.saturating_add(len.max(1)), Ordering::Relaxed);
-            if len <= 1 {
-                shadow.unsized_asks.fetch_add(1, Ordering::Relaxed);
-            }
+    if let Some(shadow) = found.filter(|shadow| {
+        if !shadow.window {
+            return true;
         }
+        // Verify a cached loose window has not been removed by idle sweep (fxceless/victory-fork#1245).
+        let map = LOOSE.read().unwrap_or_else(|e| e.into_inner());
+        if !map.get(&(shadow.start, shadow.len)).is_some_and(|entry| Arc::ptr_eq(entry, shadow)) {
+            return false;
+        }
+        shadow.used.store(crate::host::moment(), Ordering::Relaxed);
+        shadow.asked[0].fetch_min(address, Ordering::Relaxed);
+        shadow.asked[1].fetch_max(address.saturating_add(len.max(1)), Ordering::Relaxed);
+        if len <= 1 {
+            shadow.unsized_asks.fetch_add(1, Ordering::Relaxed);
+        }
+        true
+    }) {
+        LOOKUPS[0].fetch_add(1, Ordering::Relaxed);
         return Some(shadow);
     }
     LOOKUPS[1].fetch_add(1, Ordering::Relaxed);
