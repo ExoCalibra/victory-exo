@@ -45,6 +45,23 @@ pub(crate) struct Pending {
     /// The same pipeline made for other render target formats
     /// ([`for_targets`]); never removed while this one lives.
     variants: Mutex<Vec<Arc<Pending>>>,
+    /// True once a draw already waited for this slow pipeline (fxceless/victory-fork#1234).
+    waited: AtomicBool,
+}
+
+/// Whether a shader only feeds or traces ray-tracing structures while the BVH builder
+/// is off (ZSlayerHQ/zslayer-pc-port-runtime#7). `VICTORY_BVH_PASSES=1` restores them.
+fn for_structures(shaders: &[Arc<Shader>]) -> bool {
+    static OUT: OnceLock<bool> = OnceLock::new();
+    let out = *OUT.get_or_init(|| {
+        let builder = std::env::var_os("VICTORY_BVH_BUILDER").is_some_and(|v| v == "1");
+        std::env::var_os("VICTORY_BVH_PASSES").is_none_or(|v| v != "1") && !builder
+    });
+    if !out {
+        return false;
+    }
+    let has = |needle: &[u8]| shaders.iter().any(|s| s.container.windows(needle.len()).any(|w| w == needle));
+    has(b"CSComputeSkinning") || (has(b"CS_ScreenProbes_TraceRays") && has(b"_BVH_"))
 }
 
 // SAFETY: D3D12 objects are free-threaded; the graphics state (whose input
@@ -65,12 +82,17 @@ impl Pending {
             key,
             used: AtomicBool::new(false),
             variants: Mutex::new(Vec::new()),
+            waited: AtomicBool::new(false),
         }
     }
 
     fn make(&self) {
-        self.made
-            .get_or_init(|| HostPipeline::new(&self.shaders, self.graphics.as_deref()));
+        self.made.get_or_init(|| {
+            if for_structures(&self.shaders) {
+                return None;
+            }
+            HostPipeline::new(&self.shaders, self.graphics.as_deref())
+        });
         let (lock, done) = &DONE;
         let _held = lock.lock().unwrap_or_else(|e| e.into_inner());
         done.notify_all();
@@ -243,6 +265,9 @@ fn shared_budget() -> bool {
 
 /// Waits for `p` while frame `frame` has budget of its kind left.
 fn wait(p: &Pending, frame: u64) {
+    if p.waited.load(Ordering::Relaxed) {
+        return;
+    }
     let kind = usize::from(p.screen);
     let budget = if p.screen { screen_wait_budget() } else { wait_budget() };
     if budget.is_zero() {
@@ -273,6 +298,7 @@ fn wait(p: &Pending, frame: u64) {
     while p.made.get().is_none() {
         let rest = left.saturating_sub(started.elapsed());
         if rest.is_zero() {
+            p.waited.store(true, Ordering::Relaxed);
             break;
         }
         held = done.wait_timeout(held, rest).unwrap_or_else(|e| e.into_inner()).0;

@@ -1,2 +1,6 @@
 [alias]
 xtask = "run --quiet --package xtask --"
+
+# Marvisak/VIctory#3011: AVX2, BMI1/2, FMA, LZCNT, MOVBE on Windows x64.
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-cpu=x86-64-v3"]

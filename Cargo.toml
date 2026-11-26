@@ -36,6 +36,8 @@ windows-sys = "0.61.2"
 windows = "0.62.2"
 windows-core = "0.62.2"
 blake3 = "1.8.7"
+# Change detection of title memory each refresh (not persisted): xxh3 (Marvisak/VIctory#3011, BSL-1.0).
+xxhash-rust = { version = "0.8.21", features = ["xxh3"] }
 memchr = "2.8.3"
 miniz_oxide = "0.9.1"
 # SIMD-accelerated pure-Rust zlib/deflate (Zlib license, runtime AVX2/SSE4.2 dispatch).
@@ -72,6 +74,7 @@ opt-level = 2
 
 [profile.release]
 debug = "line-tables-only"
+lto = "thin"
 
 # The development build: release code generation plus the `diagnostics`
 # feature (`cargo build --profile diag -p victory --features diagnostics`),
