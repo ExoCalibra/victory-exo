@@ -649,17 +649,23 @@ impl Layout {
         }
         let n = self.desc.element_bytes as usize;
         let bytes = m.width as usize * n;
+        let slice_bytes = (m.height as usize - 1)
+            .checked_mul(row_pitch)
+            .and_then(|row_offset| row_offset.checked_add(bytes))
+            .ok_or(Error::TooSmall)?;
         let need = (depth as usize - 1)
             .checked_mul(depth_pitch)
-            .zip((m.height as usize - 1).checked_mul(row_pitch))
-            .and_then(|(depth_offset, row_offset)| depth_offset.checked_add(row_offset))
-            .and_then(|offset| offset.checked_add(bytes))
+            .and_then(|depth_offset| depth_offset.checked_add(slice_bytes))
             .ok_or(Error::TooSmall)?;
         let (tiled_len, linear_len) = match &copy {
             Buffers::Tile { tiled, linear } => (tiled.len(), linear.len()),
             Buffers::Detile { tiled, linear } => (tiled.len(), linear.len()),
         };
-        if tiled_len < self.size as usize || linear_len < need || row_pitch < bytes {
+        if tiled_len < self.size as usize
+            || linear_len < need
+            || row_pitch < bytes
+            || (depth > 1 && depth_pitch < slice_bytes)
+        {
             return Err(Error::TooSmall);
         }
         if self.desc.swizzle == Swizzle::LINEAR {

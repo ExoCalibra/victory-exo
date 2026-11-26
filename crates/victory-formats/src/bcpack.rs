@@ -1680,7 +1680,8 @@ mod tests {
             (4, 0xcf17a5467f7386bb),
             (5, 0x454337d8bb02bbbe),
             (6, 0x2f974d9b46528ac9),
-            (7, 0xe74844da352c26a4),
+            // Includes PR #374 (keep all 32 indices in first BC7 dictionary entry)
+            (7, 11_156_762_242_252_557_004),
         ];
         for ((widths, per), (bc, expected)) in LAYOUTS.into_iter().zip(goldens) {
             let mut records = random_records(widths, per, 600, false);
