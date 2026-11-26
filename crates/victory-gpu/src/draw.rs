@@ -3416,7 +3416,7 @@ impl State {
             // For timing (`indirect_trust`): the record is run as the title
             // wrote it, with no pass of ours in front of it.
             (None, None) if max == 1 && counter.is_none() && indirect_trust(kind == DISPATCH) => {
-                self.window = None;
+                self.windows.clear();
                 args.refresh(list, arguments, len);
                 (args.buffer.clone(), offset)
             }
