@@ -609,14 +609,14 @@ impl TextureQueue {
         let mut fresh_order: Vec<(u32, u64)> = Vec::with_capacity(fresh.len().min(max));
         let (mut new, mut old) = (0, fresh.len());
         while new < old && fresh_order.len() < max {
-            fresh_order.push((fresh[new].1, fresh[new].2));
+            fresh_order.push(fresh[new]);
             new += 1;
             if new < old && fresh_order.len() < max {
                 old -= 1;
-                fresh_order.push((fresh[old].1, fresh[old].2));
+                fresh_order.push(fresh[old]);
             }
         }
-        let mut again_order = again.iter().map(|&(_, index, write)| (index, write));
+        let mut again_order = again.iter().copied();
         if !fair_due() {
             let mut order: Vec<(u32, u64)> = again_order.collect();
             order.extend(fresh_order);
