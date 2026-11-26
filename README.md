@@ -1,4 +1,4 @@
-# victory-exo (NVIDIA Wave32 Fork — `exo-1053-fast`)
+# victory-exo (NVIDIA Wave32 Fork — `exo-rtx-wave2`)
 
 An NVIDIA Wave32 integration and benchmarking fork of
 [fxceless/victory-fork](https://github.com/fxceless/victory-fork) and
@@ -9,8 +9,22 @@ An NVIDIA Wave32 integration and benchmarking fork of
 copy of the title. It is not affiliated with or endorsed by the title's
 developer or publisher.
 
-## Additions on `exo-1053-fast` (All Credits Preserved)
+## Additions on `exo-rtx-wave2` (All Credits Preserved)
 
+- **Batch 1–4 community ports (NVIDIA Wave32, visuals, FPS & streaming):**
+  - `ZSlayerHQ/zslayer-pc-port-runtime#7` (**ZSlayerHQ**) — skip `CSComputeSkinning*` and `CS_ScreenProbes_TraceRays_*_BVH_*` while BVH builder is off (`VICTORY_BVH_PASSES=1` restores them).
+  - `Marvisak/VIctory#3011` (**Marvisak** contributors) — Thin LTO (`lto = "thin"`), `target-cpu=x86-64-v3` on Windows, and `xxh3_128` texture change detection.
+  - `fxceless/victory-fork#1188` (**fxceless** / contributors) — `VICTORY_BACK_QUIET=1`: copy-backs of write-watched memory no longer trigger fake title writes.
+  - `fxceless/victory-fork#1234` (**fxceless** / contributors) — wait for a slow pipeline in one frame only (`Pending::waited`), eliminating steady-state stalls.
+  - `fxceless/victory-fork#1264` (**UwUCammie**) — upload a decoration-bake draw's own textures before it (`VICTORY_BAKE_SOURCES_MB`), fixing black/blotched character skin, jackets, and facial textures.
+  - `fxceless/victory-fork#1261` (**Garu667**) — console lanes in 2-D threadgroups take their thread IDs from an LDS group counter (`VICTORY_THREAD_TICKET`, fixes NVIDIA 16×2 Wave32 tiling overlap).
+  - `DexNom#66` (**ExMoha**) — mark CBV slots with `SLOT_CONSTANT_BUFFER` so shaders only read heap slots as constant buffers when they actually hold one (prevents GPU page faults / `0x887A0006`).
+  - `Marvisak/VIctory#2904` (**0xkn0wh3r3** / **avatarmanz**) — per-worker DirectStorage `ReOpenFile` handles (`VICTORY_DSTORAGE_HANDLES`, eliminates synchronous single-handle read serialization).
+  - `fxceless/victory-fork#1233` (**spk**) — opt-in AVX2 32-byte changed-run detection (`VICTORY_CHANGED_RUNS_AVX2=1`).
+  - `fxceless/victory-fork#1230` (**spk**) — opt-in contiguous GPU readback coalescing (`VICTORY_READBACK_COALESCE=1`).
+  - `fxceless/victory-fork#1266` (**lichenlang89**) — clamp raw buffer view ranges cleanly inside their backing buffer.
+  - `fxceless/victory-fork#1224` (**Steenax6**) — opt-in submit/relay levers `VICTORY_FILL_HOT=1` and `VICTORY_BURY_ASIDE=1` (off-thread retired COM release).
+  - `fxceless/victory-fork#1140` (**Vladimir-Human**) — static Wave32 LDS alias, hazard, and lane-private analysis (`emit/lds.rs`) recovering native Wave32 compute shaders on NVIDIA.
 - **GPU & CPU frame-rate stack (`fxceless/victory-fork`):**
   - `fxceless/victory-fork#1227` (**KyleS98**) — 3-step send-and-hash batching (`VICTORY_CARD_SYNC_BATCH`): all copies, one state transition, all hash passes.
   - `fxceless/victory-fork#1171` (**KyleS98**) — indirect records gathered by runs inside lists (`VICTORY_INDIRECT_GATHER_RUNS`).
