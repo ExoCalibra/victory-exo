@@ -24,7 +24,6 @@ developer or publisher.
   - `fxceless/victory-fork#1230` (**spk**) — opt-in contiguous GPU readback coalescing (`VICTORY_READBACK_COALESCE=1`).
   - `fxceless/victory-fork#1266` (**lichenlang89**) — clamp raw buffer view ranges cleanly inside their backing buffer.
   - `fxceless/victory-fork#1224` (**Steenax6**) — opt-in submit/relay levers `VICTORY_FILL_HOT=1` and `VICTORY_BURY_ASIDE=1` (off-thread retired COM release).
-  - `fxceless/victory-fork#1140` (**Vladimir-Human**) — static Wave32 LDS alias, hazard, and lane-private analysis (`emit/lds.rs`) recovering native Wave32 compute shaders on NVIDIA.
 - **GPU & CPU frame-rate stack (`fxceless/victory-fork`):**
   - `fxceless/victory-fork#1227` (**KyleS98**) — 3-step send-and-hash batching (`VICTORY_CARD_SYNC_BATCH`): all copies, one state transition, all hash passes.
   - `fxceless/victory-fork#1171` (**KyleS98**) — indirect records gathered by runs inside lists (`VICTORY_INDIRECT_GATHER_RUNS`).

@@ -105,7 +105,6 @@ pub mod forms;
 #[cfg(all(windows, any(test, feature = "host")))]
 pub mod host;
 mod idiom;
-mod lds;
 mod link;
 mod lower;
 mod own_bits;

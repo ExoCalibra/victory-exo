@@ -10,7 +10,7 @@ use super::{Atom, LaneExit, Structured};
 /// – no per-lane branch separates it from the entry (it lies in no lane branch's region: the
 /// blocks reachable from the branch that do not post-dominate it, and the blocks of a loop the
 /// branch leaves). None with an indirect exit (not followed).
-pub(crate) fn all_lane_blocks(st: &Structured) -> Option<Vec<bool>> {
+pub(super) fn all_lane_blocks(st: &Structured) -> Option<Vec<bool>> {
     let n = st.exits.len();
     let mut all = vec![true; n];
     for (_, region) in lane_regions(st)? {
