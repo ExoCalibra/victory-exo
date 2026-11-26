@@ -532,6 +532,14 @@ struct Waiting {
     checked: (u64, u64, u64, u8, u64),
 }
 
+/// Whether due texture slots are served in turns, a slot looked at before
+/// and one never looked at ([`TextureQueue::due`]; on unless
+/// `VICTORY_FAIR_DUE=0`).
+fn fair_due() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("VICTORY_FAIR_DUE").is_none_or(|v| v != "0"))
+}
+
 /// The queue of title slots whose texture view waits to be brought up to
 /// date for shaders that pick textures by index: which are due, and in
 /// which order (no host heap needed, so it is tested without one).
@@ -565,14 +573,20 @@ impl TextureQueue {
 
     /// Up to `max` slots due at `frame`, each with its write number, in
     /// the order to serve them:
-    /// - first the ones looked at before (their memory was not mapped, or
-    ///   only part of it): the look is a query, and memory that has
-    ///   arrived since is what the title streamed in last;
-    /// - then the others, the newest write first and the oldest next, in
-    ///   turns: slot order served the low slots of a backlog of
-    ///   25,000-40,000 while the textures of the shot on screen waited
-    ///   (run 52: 98% of the drawn pixels had no colour texture in the
-    ///   first 3D frames).
+    /// - the ones looked at before (their memory was not mapped, or only
+    ///   part of it), newest write first: the look is a query, and memory
+    ///   that has arrived since is what the title streamed in last;
+    /// - the others, the newest write first and the oldest next, in turns:
+    ///   slot order served the low slots of a backlog of 25,000-40,000
+    ///   while the textures of the shot on screen waited (run 52: 98% of
+    ///   the drawn pixels had no colour texture in the first 3D frames);
+    /// - the two kinds one after the other, a slot looked at before first
+    ///   (`VICTORY_FAIR_DUE=0`: all those looked at before first, as
+    ///   before). With them all first, a backlog of thousands of slots
+    ///   streaming in a part at a time filled every pass in the opening
+    ///   cutscene, which the pass's time then cut, and slots never looked
+    ///   at waited 300 to 1,500 frames: faces whose textures are picked by
+    ///   index read an empty slot (black) or an older view (red, noise).
     fn due(&self, frame: u64, max: usize) -> Vec<(u32, u64)> {
         if max == 0 {
             return Vec::new();
@@ -591,32 +605,36 @@ impl TextureQueue {
             again.truncate(max);
         }
         again.sort_unstable_by(newest_first);
-        let take = (max - again.len()).min(fresh.len());
-        if take == 0 {
-            return again;
-        }
-        let new_count = take.div_ceil(2);
-        let old_count = take / 2;
-        if new_count < fresh.len() {
-            fresh.select_nth_unstable_by(new_count, newest_first);
-        }
-        let (newest, rest) = fresh.split_at_mut(new_count);
-        newest.sort_unstable_by(newest_first);
-        let mut oldest = &mut rest[..0];
-        if old_count > 0 {
-            let oldest_at = rest.len() - old_count;
-            if oldest_at > 0 {
-                rest.select_nth_unstable_by(oldest_at, newest_first);
+        fresh.sort_unstable_by(newest_first);
+        let mut fresh_order: Vec<(u32, u64)> = Vec::with_capacity(fresh.len().min(max));
+        let (mut new, mut old) = (0, fresh.len());
+        while new < old && fresh_order.len() < max {
+            fresh_order.push((fresh[new].1, fresh[new].2));
+            new += 1;
+            if new < old && fresh_order.len() < max {
+                old -= 1;
+                fresh_order.push((fresh[old].1, fresh[old].2));
             }
-            oldest = &mut rest[oldest_at..];
-            oldest.sort_unstable_by(|a, b| newest_first(b, a));
         }
-        again.reserve(take);
-        for (position, &entry) in newest.iter().enumerate() {
-            again.push(entry);
-            again.extend(oldest.get(position).copied());
+        let mut again_order = again.iter().map(|&(_, index, write)| (index, write));
+        if !fair_due() {
+            let mut order: Vec<(u32, u64)> = again_order.collect();
+            order.extend(fresh_order);
+            order.truncate(max);
+            return order;
         }
-        again
+        let mut fresh_order = fresh_order.into_iter();
+        let mut order = Vec::with_capacity(max.min(fresh.len() + again.len()));
+        while order.len() < max {
+            let (a, b) = (again_order.next(), fresh_order.next());
+            if a.is_none() && b.is_none() {
+                break;
+            }
+            order.extend(a);
+            order.extend(b);
+        }
+        order.truncate(max);
+        order
     }
 
     /// The entry of `index` if it is still the write the pass was handed.
@@ -3781,82 +3799,29 @@ void BY_FLOATS_OR_NOT(uint3 id : SV_DispatchThreadID) {
         assert!(q.due(16, 100).iter().any(|d| d.0 == 98));
     }
 
-    fn due_full_sort(q: &TextureQueue, frame: u64, max: usize) -> Vec<(u32, u64)> {
-        let mut again = Vec::new();
-        let mut fresh = Vec::new();
-        for (&index, w) in q.slots.iter().filter(|(_, w)| w.due <= frame) {
-            let queue = if w.looks > 0 || w.mapped > 0 { &mut again } else { &mut fresh };
-            queue.push((w.written, index, w.write));
-        }
-        again.sort_unstable_by_key(|entry| std::cmp::Reverse(entry.2));
-        fresh.sort_unstable_by_key(|entry| std::cmp::Reverse(entry.2));
-        let mut order: Vec<_> = again.into_iter().map(|(_, index, write)| (index, write)).collect();
-        let mut fresh = fresh.into_iter();
-        while order.len() < max {
-            let Some((_, index, write)) = fresh.next() else { break };
-            order.push((index, write));
-            if order.len() < max && let Some((_, index, write)) = fresh.next_back() {
-                order.push((index, write));
-            }
-        }
-        order.truncate(max);
-        order
-    }
-
-    fn due_fixture(slots: u32, repeat_every: u32) -> TextureQueue {
+    /// Slots looked at before and slots never looked at are served in
+    /// turns, one looked at before first: a pass that can take only some
+    /// of a backlog of slots streaming in a part at a time still reaches
+    /// the slots never looked at.
+    #[test]
+    fn the_texture_queue_serves_looked_at_and_fresh_slots_in_turns() {
         let mut q = TextureQueue::default();
-        for i in 0..slots {
-            // An odd multiplier gives unique slots in the 64K table and
-            // puts write order out of slot order, as in a streamed heap.
-            let index = i.wrapping_mul(32749) & 0xffff;
-            q.written(index, u64::from(i), u64::from(i % 11 == 0), false);
-            if i.is_multiple_of(repeat_every) {
-                q.slots.get_mut(&index).unwrap().looks = 1;
-            }
+        // Slots 100..110 looked at before (their memory not there yet).
+        for i in 0..10u32 {
+            q.written(100 + i, 1, 0, false);
         }
-        q
-    }
-
-    #[test]
-    fn bounded_texture_selection_matches_full_sort() {
-        for repeat_every in [1, 3, 17] {
-            let q = due_fixture(73, repeat_every);
-            for frame in [0, 1] {
-                for max in 0..=75 {
-                    assert_eq!(q.due(frame, max), due_full_sort(&q, frame, max));
-                }
-            }
+        for i in 0..10u32 {
+            let w = q.due(u64::MAX, 100).iter().find(|d| d.0 == 100 + i).unwrap().1;
+            q.later(100 + i, w, 1, 1);
         }
-    }
-
-    #[test]
-    #[ignore = "benchmark a full streaming queue"]
-    fn bench_bounded_texture_selection() {
-        use std::hint::black_box;
-        use std::time::Instant;
-
-        for repeat_every in [2, 17] {
-            let q = due_fixture(40_000, repeat_every);
-            assert_eq!(q.due(1, 4096), due_full_sort(&q, 1, 4096));
-            let mut samples = [Vec::new(), Vec::new()];
-            for _ in 0..15 {
-                for (i, elapsed) in samples.iter_mut().enumerate() {
-                    let began = Instant::now();
-                    let order = if i == 0 {
-                        due_full_sort(black_box(&q), 1, 4096)
-                    } else {
-                        black_box(&q).due(1, 4096)
-                    };
-                    black_box(order);
-                    elapsed.push(began.elapsed());
-                }
-            }
-            samples.iter_mut().for_each(|v| v.sort_unstable());
-            eprintln!(
-                "40,000 due slots, every {repeat_every}th a retry, 4,096 returned: full sort {:?}, bounded {:?}",
-                samples[0][7], samples[1][7],
-            );
+        // Slots 1..4 never looked at.
+        for i in 1..4u32 {
+            q.written(i, 2, 0, false);
         }
+        let order: Vec<u32> = q.due(10, 6).into_iter().map(|d| d.0).collect();
+        assert_eq!(order.len(), 6);
+        assert!(order[0] >= 100, "a slot looked at before comes first: {order:?}");
+        assert_eq!(order.iter().filter(|&&i| i < 100).count(), 3, "every fresh slot is reached: {order:?}");
     }
 
     /// Slots held back for lack of room on the card are not handed out
