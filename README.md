@@ -35,6 +35,7 @@ developer or publisher.
   - `fxceless/victory-fork#1246` (**Exopus-0x65f7ad0**) — serve looked-at and fresh texture slots in turns with unmapped backoff up to 20s.
   - `fxceless/victory-fork#1093` (**m335671**) — ambient indirect light stand-in while rays do not run (`VICTORY_AMBIENT`).
   - `Marvisak/VIctory#2648` (**chaseb64**) — BCPack: leave remaining payload bytes for unfinished lanes (BC7 corruption fix).
+  - `Marvisak/VIctory#3111` (**RVZO6**) — BCPack: restrict BC7 channel rotation to modes 4 and 5 (fixes BC7 channel corruption on non-mode-4/5 blocks).
   - `Marvisak/VIctory#2735` (**brainbudt**) — +27% faster BC7 BCPack decoding (+14–15% BC1/BC4).
   - `Marvisak/VIctory#2736` (**brainbudt**) — up to 2.4× faster GFX10 tiled texture detiling/tiling.
 - **Shader accuracy, pre-build & controls:**
