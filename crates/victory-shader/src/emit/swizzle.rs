@@ -40,4 +40,13 @@ impl<'a> Lower<'a> {
         let group = self.s.m.bin(c, Bin::And, lane, high);
         Ok(self.s.m.bin(c, Bin::Or, group, j))
     }
+
+    /// `-x` as the `neg` input modifier computes it: bit 31 flipped, a NaN's
+    /// sign too (Marvisak/VIctory#2823).
+    pub(super) fn fneg(&mut self, f: V) -> V {
+        let x = self.as_int(f);
+        let sign = self.s.m.i32(0x8000_0000);
+        let x = self.s.m.bin(self.cur, Bin::Xor, x, sign);
+        self.as_float(x)
+    }
 }

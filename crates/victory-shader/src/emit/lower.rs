@@ -3341,8 +3341,7 @@ impl<'a> Lower<'a> {
             f = self.unary(6, f);
         }
         if v.neg >> k & 1 != 0 {
-            let z = self.s.m.f32(0x8000_0000);
-            f = self.s.m.bin(self.cur, Bin::Sub, z, f);
+            f = self.fneg(f);
         }
         Ok(f)
     }
@@ -7326,8 +7325,7 @@ impl<'a> Lower<'a> {
                         x = self.unary(6, x);
                     }
                     if v.neg >> i & 1 != 0 {
-                        let z = self.s.m.f32(0x8000_0000);
-                        x = self.s.m.bin(c, Bin::Sub, z, x);
+                        x = self.fneg(x);
                     }
                     xs.push(x);
                 }
@@ -7749,8 +7747,7 @@ impl<'a> Lower<'a> {
             f = self.unary(6, f);
         }
         if v.neg >> k & 1 != 0 {
-            let z = self.s.m.f32(0x8000_0000);
-            f = self.s.m.bin(self.cur, Bin::Sub, z, f);
+            f = self.fneg(f);
         }
         Ok(f)
     }
@@ -8264,8 +8261,7 @@ impl<'a> Lower<'a> {
                         .op(c, "legacyF16ToF32", Attr::ReadNone, f32t, 131, &[h]);
                     let neg = if high { v.neg_hi } else { v.neg };
                     if neg >> k & 1 != 0 {
-                        let z = self.s.m.f32(0x8000_0000);
-                        f = self.s.m.bin(c, Bin::Sub, z, f);
+                        f = self.fneg(f);
                     }
                     xs.push(f);
                 } else {
