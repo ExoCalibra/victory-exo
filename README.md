@@ -25,6 +25,9 @@ developer or publisher.
   - `Marvisak/VIctory#2735` (**brainbudt**) — +27% faster BC7 BCPack decoding (+14–15% BC1/BC4).
   - `Marvisak/VIctory#2736` (**brainbudt**) — up to 2.4× faster GFX10 tiled texture detiling/tiling.
 - **Shader accuracy, pre-build & controls:**
+  - `fxceless/victory-fork#1258` (**notquiteog**) — NVIDIA 1M descriptor heap cap dynamic overflow (`393,215` static + `606,784` dynamic slots so zero open-world tables are refused).
+  - `fxceless/victory-fork#1260` (**LeonardoS11**) — zero-byte CBV stays zero (fixes flickering floors/surfaces).
+  - `fxceless/victory-fork#837` (**PastiiJay** / **KLBF Lab**) — NaN guard on pixel colour exports (`VICTORY_NAN_GUARD`, stops black sky & black water NaN spread).
   - `fxceless/victory-fork#1226` (**regiumlepidi** / upstream `13f91ca`) — offline `victory translate --cache --pipelines` shader & D3D12 PSO pre-builder.
   - `Marvisak/VIctory#2823` (**xKineticK**) — `neg` input modifier flips a NaN's sign too (`fneg` XOR sign bit).
   - `Marvisak/VIctory#2406` (**makmatvey**) — `s_cbranch_vccz`/`vccnz` tests raw `VCC`, not `VCC & EXEC`.

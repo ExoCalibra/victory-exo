@@ -1,7 +1,7 @@
 //! `ds_swizzle_b32` rotate (0xC000..0xE000) and FFT (0xE000..=0xFFFF) modes (Marvisak/VIctory#606).
 
 use super::{Bin, Lower, Why};
-use crate::emit::bitcode::{Attr, V};
+use crate::emit::bitcode::{Attr, V, pred};
 
 impl<'a> Lower<'a> {
     pub(super) fn ds_swizzle_fft_or_rotate(
@@ -48,5 +48,41 @@ impl<'a> Lower<'a> {
         let sign = self.s.m.i32(0x8000_0000);
         let x = self.s.m.bin(self.cur, Bin::Xor, x, sign);
         self.as_float(x)
+    }
+
+    /// `VICTORY_NAN_GUARD` (on unless `0`): guards pixel colour exports (and, with
+    /// `VICTORY_NAN_GUARD=stores`, typed image/buffer stores) by mapping NaN to 0
+    /// and ±Inf to ±65504 so one bad pixel cannot spread across bloom/sky/water
+    /// (PastiiJay / KLBF Lab, fxceless/victory-fork#837).
+    pub(super) fn nan_guard(&mut self, f: V, strict: bool) -> V {
+        static MODE: std::sync::OnceLock<u8> = std::sync::OnceLock::new();
+        let mode = *MODE.get_or_init(|| match std::env::var("VICTORY_NAN_GUARD").as_deref() {
+            Ok("0") => 0,
+            Ok("stores") => 2,
+            _ => 1,
+        });
+        if mode == 0 || (!strict && mode < 2) {
+            return f;
+        }
+        let c = self.cur;
+        let bits = self.as_int(f);
+        let mag = self.s.m.i32(0x7FFF_FFFF);
+        let abs = self.s.m.bin(c, Bin::And, bits, mag);
+        let inf_bits = self.s.m.i32(0x7F80_0000);
+        let nan = if strict {
+            self.s.m.cmp(c, pred::IUGT, abs, inf_bits)
+        } else {
+            let quiet = self.s.m.i32(0x7FC0_0000);
+            self.s.m.cmp(c, pred::EQ, abs, quiet)
+        };
+        let inf = self.s.m.cmp(c, pred::EQ, abs, inf_bits);
+        let sign_bit = self.s.m.i32(0x8000_0000);
+        let sign = self.s.m.bin(c, Bin::And, bits, sign_bit);
+        let big = self.s.m.i32(65504f32.to_bits());
+        let big = self.s.m.bin(c, Bin::Or, sign, big);
+        let zero = self.s.m.i32(0);
+        let r = self.s.m.select(c, inf, big, bits);
+        let r = self.s.m.select(c, nan, zero, r);
+        self.as_float(r)
     }
 }
