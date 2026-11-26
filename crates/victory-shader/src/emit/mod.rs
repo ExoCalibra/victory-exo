@@ -826,7 +826,7 @@ fn emit_forms(
                 let again = widen(c, native, base, why);
                 report("wave-wide branches (last)", &again);
                 if done(&again) {
-                    return again.map(|(shader, _)| shader);
+                    return again;
                 }
             }
         }
