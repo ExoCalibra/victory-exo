@@ -503,18 +503,9 @@ pub(crate) struct State {
     depth_state: u32,
     /// The title's primitive topology (the host's may differ).
     topology: u32,
-    /// What the title set that goes straight onto the host list, kept for
-    /// the host list that continues this one after a cut ([`State::replay`]):
-    /// whether a topology was set, the render target and depth handles, the
-    /// viewports, the scissors, the blend factor and the stencil reference.
+    /// Whether the title has supplied a topology to restore after internal work.
     topology_set: bool,
-    target_handles: Vec<u64>,
-    depth_handle: u64,
-    targets_set: bool,
-    /// The render target views and the depth view the host list has, once
-    /// it has any ([`State::set_targets`]): per view the host texture (0:
-    /// a null view) and what its descriptor says.
-    host_targets: Option<(Vec<TargetKey>, Option<TargetKey>)>,
+    host_targets: Option<BoundTargets>,
     viewports: Vec<D3D12_VIEWPORT>,
     scissors: Vec<RECT>,
     blend: Option<[f32; 4]>,
@@ -1113,6 +1104,28 @@ pub(crate) fn dispatched() -> u64 {
 /// texture, and [`crate::descriptor::RtvRecord::key`].
 type TargetKey = (usize, (usize, [u32; 7]));
 
+struct BoundTargets {
+    keys: (Vec<TargetKey>, Option<TargetKey>),
+    colour: Vec<(Option<ID3D12Resource>, Option<D3D12_RENDER_TARGET_VIEW_DESC>)>,
+    depth: Option<(ID3D12Resource, Option<D3D12_DEPTH_STENCIL_VIEW_DESC>)>,
+}
+
+impl BoundTargets {
+    fn restore(&self, list: &HostList, host: &crate::host::Host) {
+        let rtvs: Vec<_> = self.colour.iter().map(|(texture, desc)| host.rtv(texture.as_ref(), desc.as_ref())).collect();
+        let dsv = self.depth.as_ref().map(|(texture, desc)| host.dsv(texture, desc.as_ref()));
+        // SAFETY: an open list and descriptors that still name the original attachments.
+        unsafe {
+            list.list.OMSetRenderTargets(
+                rtvs.len() as u32,
+                (!rtvs.is_empty()).then_some(rtvs.as_ptr()),
+                false,
+                dsv.as_ref().map(std::ptr::from_ref),
+            )
+        };
+    }
+}
+
 /// The host address of a root view: its buffer's host copy, or for a
 /// constant buffer not 256-byte aligned there (the console needs 16) a
 /// copy in upload memory.
@@ -1455,10 +1468,6 @@ impl State {
         let Some(host) = crate::host::host() else {
             return;
         };
-        self.target_handles.clear();
-        self.target_handles.extend_from_slice(handles);
-        self.depth_handle = depth;
-        self.targets_set = true;
         self.targets.clear();
         let mut views = Vec::with_capacity(handles.len());
         let mut keys = Vec::with_capacity(handles.len());
@@ -1508,22 +1517,17 @@ impl State {
         let now = (keys, dsv.as_ref().map(|(texture, record)| (texture.as_raw() as usize, record.key())));
         static CACHE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
         if *CACHE.get_or_init(|| std::env::var("VICTORY_BIND_CACHE").map_or(true, |v| v != "0"))
-            && self.host_targets.as_ref() == Some(&now)
+            && self.host_targets.as_ref().is_some_and(|bound| bound.keys == now)
         {
             return;
         }
-        self.host_targets = Some(now);
-        let rtvs: Vec<_> = views.iter().map(|(texture, desc)| host.rtv(*texture, desc.as_ref())).collect();
-        let dsv = dsv.map(|(texture, record)| host.dsv(texture, record.depth_desc().as_ref()));
-        // SAFETY: an open list; the views were just made.
-        unsafe {
-            list.list.OMSetRenderTargets(
-                rtvs.len() as u32,
-                (!rtvs.is_empty()).then_some(rtvs.as_ptr()),
-                false,
-                dsv.as_ref().map(std::ptr::from_ref),
-            )
+        let bound = BoundTargets {
+            keys: now,
+            colour: views.into_iter().map(|(texture, desc)| (texture.cloned(), desc)).collect(),
+            depth: dsv.map(|(texture, record)| (texture.clone(), record.depth_desc())),
         };
+        bound.restore(list, host);
+        self.host_targets = Some(bound);
     }
 
     /// Viewports, scissors, the blend factor and the stencil reference: set
@@ -1572,18 +1576,8 @@ impl State {
         crate::draw::depth_bounds(list, min, max);
     }
 
-    /// `list` is a new host list that continues the title's list (it was
-    /// cut at a wait for a memory value, `crate::list::cut`): a new host
-    /// list has nothing set, so what the title set so far is set again.
-    /// The pipeline, the root signatures and the heaps are set by the next
-    /// draw or dispatch (`bind`, which is told here that the host list has
-    /// none); root arguments, vertex and index buffers are set by every
-    /// draw anyway. The dynamic descriptor slots and the tables made in
-    /// them stay: the parts before the cut have not run yet, and they are
-    /// given back when the title's list is reset.
-    /// shortcut: the render target views are made again from the handles'
-    /// descriptors as they are now, not as they were when the title set
-    /// the targets (a descriptor rewritten in between names another view).
+    /// Restore guest bindings after a list cut or an internal depth pass.
+    /// The next draw or dispatch sets its pipeline, heaps and root arguments.
     pub(crate) fn replay(&mut self, list: &HostList) {
         self.host_pipeline = 0;
         self.host_roots = [0; 2];
@@ -1592,10 +1586,8 @@ impl State {
         if self.topology_set {
             self.set_topology(list, self.topology);
         }
-        self.host_targets = None;
-        if self.targets_set {
-            let handles = std::mem::take(&mut self.target_handles);
-            self.set_targets(list, &handles, self.depth_handle);
+        if let (Some(targets), Some(host)) = (&self.host_targets, crate::host::host()) {
+            targets.restore(list, host);
         }
         if !self.viewports.is_empty() {
             crate::draw::viewports(list, &self.viewports);
@@ -2166,9 +2158,6 @@ impl State {
                 }
             }
         }
-        // Depth textures it writes through unordered access: their colour
-        // twins hold what they lack from here on.
-        list.twins_written();
         true
     }
 
@@ -2209,15 +2198,12 @@ impl State {
             }
             Some(s)
         };
-        #[cfg(feature = "diagnostics")]
         let pipeline = self.pipeline;
         let ready = |a: u64, s: &std::sync::Arc<crate::shadow::Shadow>| {
             let len = s.left(a).min(limit);
             s.refresh(list, a, len);
             if writes {
-                #[cfg(feature = "diagnostics")]
-                crate::host::wide_write(a, len, pipeline);
-                s.gpu_writes(list, a, len);
+                s.shader_writes(list, a, len, pipeline);
             }
         };
         if !crate::pipeline::host::bounded_root_srvs() {
@@ -3806,6 +3792,7 @@ impl State {
             self.host_pipeline = 0;
             self.host_roots[1] = 0;
         }
+        self.finish_depth_writes(list);
     }
 
     /// The stand-in for the indirect light after a dispatch of `p`
@@ -4396,6 +4383,7 @@ impl State {
                     unsafe { l6.DispatchMesh(x.min(65_535), 1, 1) };
                     self.drew(crate::pipeline::host_pipeline(self.pipeline as This));
                     self.mesh_scissor(list, false);
+                    self.finish_depth_writes(list);
                     DRAWN.fetch_add(1, Ordering::Relaxed);
                     true
                 }
@@ -4881,6 +4869,7 @@ impl State {
                 viewports(list, &self.viewports);
             }
             self.drew(crate::pipeline::host_pipeline(self.pipeline as This));
+            self.finish_depth_writes(list);
             DRAWN.fetch_add(1, Ordering::Relaxed);
         }
         if !ran {
@@ -5064,6 +5053,7 @@ impl State {
                     .DrawIndexedInstanced(indices, instances, first, base, first_instance)
             };
             self.drew(crate::pipeline::host_pipeline(self.pipeline as This));
+            self.finish_depth_writes(list);
             DRAWN.fetch_add(1, Ordering::Relaxed);
         }
         if !ran {
@@ -5075,6 +5065,12 @@ impl State {
 }
 
 impl State {
+    fn finish_depth_writes(&mut self, list: &HostList) {
+        if list.twins_written() {
+            self.replay(list);
+        }
+    }
+
     /// Shaders that can write buffers were recorded: arguments may be others
     /// from here on.
     fn buffers_written(&mut self) {
@@ -5454,6 +5450,7 @@ impl State {
                 self.host_roots[1] = 0;
             }
         }
+        self.finish_depth_writes(list);
         // The scratch buffer stays readable as arguments: the next draw of
         // the window reads it with no barrier, and the next clamp moves it
         // back (`crate::indirect`).
@@ -5785,9 +5782,7 @@ fn readable(list: &HostList, kind: ResourceType, view: &View) {
             // A shader that cannot store to buffers leaves the range as
             // the title has it: nothing to find afterwards.
             if STORES.get() || !write_skip() {
-                #[cfg(feature = "diagnostics")]
-                crate::host::wide_write(address, len, 0);
-                shadow.gpu_writes(list, address, len);
+                shadow.shader_writes(list, address, len, 0);
             } else {
                 #[cfg(feature = "diagnostics")]
                 {
