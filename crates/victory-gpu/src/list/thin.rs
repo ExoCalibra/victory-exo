@@ -544,16 +544,26 @@ extern "system" fn allocate_upload(this: This, size: u64, alignment: u64) -> *mu
     if this.is_null() || !align.is_power_of_two() {
         return std::ptr::null_mut();
     }
-    let front = front(this);
-    if front.closed || front.recording.is_none() {
-        return std::ptr::null_mut();
-    }
     let Some(mut block) = Upload::new(len) else {
         return std::ptr::null_mut();
     };
     let start = block.start();
     // SAFETY: the offset is below `align`, so `size` bytes fit after it.
     let place = unsafe { start.add(start.align_offset(align)) };
+    let front = front(this);
+    if front.closed || front.recording.is_none() {
+        // Fallback matching non-thin `list.rs`: keep the block alive on the
+        // list instead of returning null (returning null causes title DLLs like
+        // XboxBvhBuilder to abort via `_invalid_parameter_noinfo_noreturn`).
+        static ONCE: std::sync::Once = std::sync::Once::new();
+        ONCE.call_once(|| {
+            tracing::warn!(size, alignment, "allocate_upload called on closed/unopened thin list; kept on list");
+        });
+        // SAFETY: the title passes one of our lists.
+        let uploads = unsafe { &(*this.cast::<List>()).uploads };
+        uploads.lock().unwrap_or_else(|e| e.into_inner()).push(block);
+        return place;
+    }
     front.put(UPLOAD, &[Box::into_raw(Box::new(block)) as u64]);
     place
 }

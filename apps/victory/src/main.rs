@@ -355,6 +355,10 @@ enum Command {
         /// The console model the title sees (device type, memory).
         #[arg(long, value_enum, default_value_t = Console::SeriesX)]
         console: Console,
+        /// What the title's button prompts show: its gamepad pictures, or
+        /// keyboard/mouse key caps (overrides `VICTORY_PROMPTS` and `[controls] prompts`).
+        #[arg(long, value_enum)]
+        prompts: Option<Prompts>,
         /// Arguments for the title, after `--` (it reads the whole command
         /// line; a title that relaunches itself passes some).
         #[arg(last = true)]
@@ -398,6 +402,12 @@ enum Console {
     SeriesS,
 }
 
+#[derive(Clone, Copy, ValueEnum)]
+enum Prompts {
+    Gamepad,
+    Keys,
+}
+
 fn main() -> Result<()> {
     #[cfg(windows)]
     match_d3d12_core();
@@ -429,7 +439,16 @@ fn main() -> Result<()> {
             // F1's MFG UNLOCKER: the mod, before the layer makes its device or loads Streamline.
             play::load_mfg();
             let console = if ready.series_s { Console::SeriesS } else { Console::SeriesX };
-            run::run(&ready.exe, Unimplemented::Trap, false, true, console)
+            run::run(
+                &ready.exe,
+                &run::Launch {
+                    unimplemented: Unimplemented::Trap,
+                    strict: false,
+                    execute: true,
+                    console,
+                    prompts: None,
+                },
+            )
         });
         if let Err(e) = &done
             && bare
@@ -523,10 +542,20 @@ fn main() -> Result<()> {
             strict,
             execute,
             console,
+            prompts,
             title_args,
         } => {
             victory_hle::runtime::set_title_args(title_args);
-            run::run(&exe, unimplemented, strict, execute, console)
+            run::run(
+                &exe,
+                &run::Launch {
+                    unimplemented,
+                    strict,
+                    execute,
+                    console,
+                    prompts,
+                },
+            )
         }
         #[cfg(all(windows, feature = "diagnostics"))]
         Command::Replay(options) => replay::run(options),

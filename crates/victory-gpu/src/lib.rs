@@ -23,6 +23,7 @@ mod capture;
 #[cfg(windows)]
 mod compose;
 pub mod console;
+pub mod controls_ui;
 #[cfg(all(windows, feature = "diagnostics"))]
 mod copystat;
 #[cfg(all(windows, feature = "diagnostics"))]
@@ -47,6 +48,17 @@ mod host;
 /// The F1 settings menu is shown (`host/menu.rs`): the title gets no keyboard meanwhile
 /// (read by the input module).
 pub static SETTINGS_MENU_OPEN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// The F2 controls layout overlay is shown (`host/controls_menu.rs`): the title gets no
+/// keyboard/mouse input and the cursor is freed meanwhile.
+pub static CONTROLS_MENU_OPEN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// True while either the F1 settings menu or the F2 controls overlay is open.
+pub fn overlay_open() -> bool {
+    use std::sync::atomic::Ordering::Relaxed;
+    SETTINGS_MENU_OPEN.load(Relaxed) || CONTROLS_MENU_OPEN.load(Relaxed)
+}
+/// The mouse cursor is captured by the KBM input layer (`gameinput::cursor`):
+/// respected by our fallback host window's `WM_SETCURSOR` handler.
+pub static CURSOR_CAPTURED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 #[cfg(windows)]
 mod indirect;
 #[cfg(windows)]

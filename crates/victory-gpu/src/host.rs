@@ -2312,24 +2312,51 @@ impl<T> Spare<T> {
 /// Scratch chunks no list holds.
 static SPARE: Mutex<Spare<Chunk>> = Mutex::new(Spare::new());
 
-/// A scratch chunk of `size` bytes: one kept ([`SPARE`]) or a new one.
-fn take_chunk(host: &Host, size: u64) -> Option<Chunk> {
-    if scratch_pool()
-        && let Some(chunk) = SPARE.lock().unwrap_or_else(|e| e.into_inner()).take(size)
-    {
-        ALIVE[3].fetch_sub(1, Ordering::Relaxed);
-        ALIVE[4].fetch_sub(size, Ordering::Relaxed);
-        ALIVE[5].fetch_add(1, Ordering::Relaxed);
-        return Some(chunk);
+/// A scratch chunk of `size` bytes or more: one kept ([`SPARE`]) or a new
+/// one; and its size.
+///
+/// A small first chunk ([`SCRATCH_FIRST`]) asked for while none of them is
+/// kept is a kept 4 MiB one. Without that, on an RTX 5080 (Jason's balcony,
+/// Series S) the spares sat at their bound the whole time, all of them
+/// 4 MiB ones, while some 35 small first chunks a frame were made new and
+/// as many came back past the bound and were freed (about 1 ms each, a
+/// committed upload buffer).
+fn take_chunk(host: &Host, size: u64) -> Option<(Chunk, u64)> {
+    if scratch_pool() {
+        let mut spare = SPARE.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some((chunk, size)) = take_kept(&mut spare, size, scratch_any_size()) {
+            ALIVE[3].fetch_sub(1, Ordering::Relaxed);
+            ALIVE[4].fetch_sub(size, Ordering::Relaxed);
+            ALIVE[5].fetch_add(1, Ordering::Relaxed);
+            return Some((chunk, size));
+        }
     }
     let (buffer, data) = host.upload_buffer(size)?;
     name(&buffer, || "list scratch".into());
     ALIVE[1].fetch_add(1, Ordering::Relaxed);
     ALIVE[2].fetch_add(size, Ordering::Relaxed);
-    Some(Chunk {
+    let chunk = Chunk {
         buffer,
         data: data as usize,
+    };
+    Some((chunk, size))
+}
+
+/// A kept chunk for a list that asks for `size` bytes, and its size: one of
+/// that size, else, for a small first chunk with `any`, a kept 4 MiB one.
+fn take_kept<T>(spare: &mut Spare<T>, size: u64, any: bool) -> Option<(T, u64)> {
+    spare.take(size).map(|c| (c, size)).or_else(|| {
+        (any && size == SCRATCH_FIRST)
+            .then(|| spare.take(SCRATCH_CHUNK).map(|c| (c, SCRATCH_CHUNK)))
+            .flatten()
     })
+}
+
+/// Whether a list's small first chunk may be a kept 4 MiB one
+/// (`VICTORY_SCRATCH_ANY_SIZE`, on; `=0`: only one of its own size).
+fn scratch_any_size() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("VICTORY_SCRATCH_ANY_SIZE").is_none_or(|v| v != "0"))
 }
 
 /// A list is done with `chunks` (it was reset after its submissions ran,
@@ -4199,6 +4226,7 @@ mod card_steps;
 #[cfg(feature = "diagnostics")]
 pub(crate) mod indirects;
 mod font;
+mod controls_menu;
 mod menu;
 mod panel;
 mod place;
@@ -7744,7 +7772,7 @@ impl HostList {
             } else {
                 SCRATCH_CHUNK
             };
-            let chunk = take_chunk(host, size)?;
+            let (chunk, size) = take_chunk(host, size)?;
             s.chunks.push((chunk, size));
             s.used = 0;
         }
@@ -8090,7 +8118,7 @@ impl HostList {
         read: (usize, usize),
         fill: impl Fn(usize) + Send + 'static,
     ) -> Option<ID3D12Resource> {
-        let chunk = take_chunk(host()?, size)?;
+        let (chunk, size) = take_chunk(host()?, size)?;
         let source = chunk.buffer.clone();
         let destination = chunk.data;
         let mut deferred = self.deferred();
@@ -9638,6 +9666,8 @@ struct Presenter {
     notice: panel::Notice,
     /// The F1 settings menu.
     menu: menu::Menu,
+    /// The F2 controls layout overlay and live mode badge.
+    controls_menu: controls_menu::ControlsMenu,
     /// The swap chain lets a frame be shown at once ([`tearing`]): its flags, kept for
     /// ResizeBuffers, which may not change them.
     tearing: bool,
@@ -10447,6 +10477,7 @@ impl Host {
             p.panel.draw(self, copy, &back, (width, height), format);
             p.notice.draw(self, copy, &back, (width, height), format);
             p.menu.draw(self, copy, &back, (width, height), format);
+            p.controls_menu.draw(self, copy, &back, (width, height), format);
             #[cfg(not(feature = "diagnostics"))]
             let _ = frame;
             if composed {
@@ -10529,6 +10560,7 @@ impl Host {
             showing.next("the frame meter");
             p.panel.frame(p.meter.line_due());
             p.menu.frame();
+            p.controls_menu.frame();
             p.meter.frame(p.hwnd);
             showing.end();
             #[cfg(feature = "diagnostics")]
@@ -10624,6 +10656,7 @@ impl Host {
                 panel: panel::Panel::new(),
                 notice: panel::Notice::new(),
                 menu: menu::Menu::new(),
+                controls_menu: controls_menu::ControlsMenu::new(),
                 tearing,
                 presents_tearing: tearing,
                 present_refused: false,
@@ -11238,6 +11271,14 @@ extern "system" fn window_proc(
     wparam: WPARAM,
     lparam: LPARAM,
 ) -> LRESULT {
+    if message == WM_SETCURSOR
+        && crate::CURSOR_CAPTURED.load(Ordering::Relaxed)
+        && (lparam.0 as u32 & 0xFFFF) == HTCLIENT
+    {
+        // SAFETY: hide cursor over our client area while captured.
+        unsafe { SetCursor(None) };
+        return LRESULT(1);
+    }
     // SAFETY: the default handling for our window.
     unsafe { DefWindowProcW(hwnd, message, wparam, lparam) }
 }
@@ -11356,6 +11397,26 @@ mod spare {
         assert_eq!(spare.bytes, 4);
         assert_eq!(spare.take(4), Some(3));
     }
+
+    /// A list's small first chunk takes a kept 4 MiB one when none of its own
+    /// size is kept (`VICTORY_SCRATCH_ANY_SIZE`), and says so by its size; a
+    /// kept small one comes first, and other sizes take only their own.
+    #[test]
+    fn a_small_first_chunk_takes_a_kept_4_mib_one() {
+        use super::{SCRATCH_CHUNK, SCRATCH_FIRST, take_kept};
+        let mut spare: Spare<u32> = Spare::new();
+        assert_eq!(spare.give(1, SCRATCH_CHUNK, u64::MAX), None);
+        assert_eq!(take_kept(&mut spare, SCRATCH_FIRST, false), None, "switched off: its own size only");
+        assert_eq!(take_kept(&mut spare, 8 << 20, true), None, "only the small first chunk");
+        assert_eq!(take_kept(&mut spare, SCRATCH_FIRST, true), Some((1, SCRATCH_CHUNK)));
+        assert_eq!(spare.bytes, 0);
+        // A kept small one is taken before a 4 MiB one.
+        assert_eq!(spare.give(2, SCRATCH_CHUNK, u64::MAX), None);
+        assert_eq!(spare.give(3, SCRATCH_FIRST, u64::MAX), None);
+        assert_eq!(take_kept(&mut spare, SCRATCH_FIRST, true), Some((3, SCRATCH_FIRST)));
+        assert_eq!(take_kept(&mut spare, SCRATCH_CHUNK, true), Some((2, SCRATCH_CHUNK)));
+        assert_eq!(take_kept(&mut spare, SCRATCH_FIRST, true), None);
+    }
 }
 
 #[cfg(test)]
@@ -11453,12 +11514,22 @@ mod refresh_tests {
         }
     }
 
+    /// One submission's asking at a time in this test process, as in the
+    /// layer (one thread prepares them): taken by [`submission`] and by the
+    /// tests that ask as a submission does themselves. (Without it, one
+    /// test's asking ended another's while a third thread of that one was
+    /// refreshing: 4 of 40 runs of these tests with `watch::`'s left a copy
+    /// behind, with every hold of pages, 1 of 40 holding all memory; none
+    /// in 60 of the test alone.)
+    fn one_submission() -> std::sync::MutexGuard<'static, ()> {
+        static ONE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        ONE.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
     /// Prepares as a submission does: one asking for all the ranges, the
     /// refreshes in several flushes, the asking's end.
     fn submission(ranges: &[(Arc<Shadow>, usize, usize)], flushes: usize) {
-        // One at a time, as submissions are.
-        static ONE: std::sync::Mutex<()> = std::sync::Mutex::new(());
-        let _one = ONE.lock().unwrap_or_else(|e| e.into_inner());
+        let _one = one_submission();
         let asked: Vec<(usize, usize)> = ranges.iter().filter(|r| !r.0.unwatched()).map(|r| (r.1, r.1 + r.2)).collect();
         crate::watch::ask_once(&asked);
         let mut batch = Batch::default();
@@ -11533,6 +11604,100 @@ mod refresh_tests {
                 assert!(same, "round {round}: {at:#x}+{n:#x} of a copy at {start:#x}; first byte {}", byte(*at));
             }
         }
+    }
+
+    /// A submission's asking beside other threads' askings, as the heaps'
+    /// thread and the helpers' texture refreshes ask while one is prepared:
+    /// copies of the same title memory refreshed by a submission on one
+    /// thread and one range at a time on another, while a third asks about
+    /// other memory without end. Whatever was written before a round, every
+    /// copy holds what title memory holds after it (an asking that forgot
+    /// pages another had not yet noted would leave one of them behind).
+    #[test]
+    fn askings_of_other_threads_beside_a_submission() {
+        const LEN: usize = 32 * PAGE;
+        let mut random = Random(0x2468_1357_ACE0_BDF9);
+        let regions = [title(LEN, false), title(LEN, true)];
+        let elsewhere = title(LEN, false);
+        // SAFETY: the test's own memory.
+        unsafe {
+            for r in regions.into_iter().chain([elsewhere]) {
+                std::ptr::write_bytes(r as *mut u8, 1, LEN);
+            }
+        }
+        // The submission's copies, and the other thread's over the same
+        // memory, cut elsewhere.
+        let cut = |spans: &[(usize, usize)]| -> Vec<(Arc<Shadow>, *mut u8, usize, usize)> {
+            regions
+                .iter()
+                .flat_map(|&region| {
+                    spans.iter().map(move |&(from, to)| {
+                        let data = memory(to - from);
+                        (Shadow::unbacked((region + from) as u64, data, (to - from) as u64, false), data, region + from, to - from)
+                    })
+                })
+                .collect()
+        };
+        let ours = cut(&(0..8).map(|i| (i * 4 * PAGE, (i + 1) * 4 * PAGE)).collect::<Vec<_>>());
+        let theirs = cut(&[(100, 6 * PAGE + 9), (6 * PAGE + 9, 19 * PAGE), (19 * PAGE, LEN - 3), (3 * PAGE, 4 * PAGE + 1)]);
+        let ranges: Vec<(Arc<Shadow>, usize, usize)> = ours.iter().map(|c| (c.0.clone(), c.2, c.3)).collect();
+        let same = |c: &(Arc<Shadow>, *mut u8, usize, usize)| unsafe {
+            std::slice::from_raw_parts(c.2 as *const u8, c.3) == std::slice::from_raw_parts(c.1, c.3)
+        };
+        let stop = std::sync::atomic::AtomicBool::new(false);
+        // Told to stop however the rounds end (a failed one too: the scope
+        // would wait for it without end).
+        struct Stop<'a>(&'a std::sync::atomic::AtomicBool);
+        impl Drop for Stop<'_> {
+            fn drop(&mut self) {
+                self.0.store(true, std::sync::atomic::Ordering::Relaxed);
+            }
+        }
+        const ROUNDS: usize = 300;
+        // (Raw pointers are the test's own memory, used by one thread at a time.)
+        struct Sent<T>(T);
+        unsafe impl<T> Send for Sent<T> {}
+        unsafe impl<T> Sync for Sent<T> {}
+        let theirs = Sent(theirs);
+        std::thread::scope(|s| {
+            // Without end, about memory no copy here holds.
+            s.spawn(|| {
+                let mut n = 0usize;
+                while !stop.load(std::sync::atomic::Ordering::Relaxed) {
+                    let at = elsewhere + (n * 7 % 31) * PAGE;
+                    // SAFETY: the test's own memory.
+                    unsafe { (at as *mut u8).write_volatile(n as u8) };
+                    let _ = crate::watch::writes(at, at + PAGE, false);
+                    n += 1;
+                }
+            });
+            let _stop = Stop(&stop);
+            for round in 0..ROUNDS {
+                for _ in 0..1 + random.below(8) {
+                    let at = regions[random.below(2)] + random.below(LEN - 64);
+                    for i in 0..1 + random.below(60) {
+                        // SAFETY: the test's own memory.
+                        unsafe { ((at + i) as *mut u8).write_volatile(random.below(256) as u8) };
+                    }
+                }
+                // One range at a time on another thread, beside the submission.
+                std::thread::scope(|s| {
+                    let theirs = &theirs;
+                    s.spawn(move || {
+                        for c in &theirs.0 {
+                            c.0.update(c.2, c.3);
+                        }
+                    });
+                    submission(&ranges, 1 + random.below(3));
+                });
+                for c in &ours {
+                    assert!(same(c), "round {round}: a copy the submission refreshed at {:#x}+{:#x} differs", c.2, c.3);
+                }
+                for c in &theirs.0 {
+                    assert!(same(c), "round {round}: a copy refreshed beside it at {:#x}+{:#x} differs", c.2, c.3);
+                }
+            }
+        });
     }
 
     /// A copy in the card's memory, with the card's side and the sends to it
@@ -11835,6 +12000,7 @@ mod refresh_tests {
             // Ends in the middle of pages.
             let (at, len) = (region + 500, 5 * PAGE);
             let look = |expected: bool, what: &str| {
+                let _one = one_submission();
                 // The submission's one asking, which takes two ranges. (Again
                 // if a submission of another test ended it.)
                 let mut known = false;

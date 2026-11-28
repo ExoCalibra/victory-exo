@@ -636,6 +636,7 @@ dependencies = [
  "blake3",
  "clap",
  "memchr",
+ "tracing",
  "victory-core",
  "victory-formats",
  "victory-game",
@@ -667,6 +668,12 @@ name = "victory-game"
 version = "0.1.0"
 dependencies = [
  "memchr",
+ "thiserror",
+ "tracing",
+ "victory-core",
+ "victory-formats",
+ "victory-loader",
+ "windows-sys",
  "zlib-rs",
 ]
 
@@ -691,8 +698,11 @@ name = "victory-hle"
 version = "0.1.0"
 dependencies = [
  "opus-pure",
+ "serde",
  "tempfile",
+ "toml",
  "tracing",
+ "victory-core",
  "victory-formats",
  "victory-gpu",
  "victory-loader",

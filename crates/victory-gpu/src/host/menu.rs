@@ -815,7 +815,11 @@ impl Menu {
                 continue;
             }
             if vk == VK_F1 || (open && vk == VK_ESCAPE) {
-                crate::SETTINGS_MENU_OPEN.store(!open && vk == VK_F1, Ordering::Relaxed);
+                let next = !open && vk == VK_F1;
+                if next {
+                    crate::CONTROLS_MENU_OPEN.store(false, Ordering::Relaxed);
+                }
+                crate::SETTINGS_MENU_OPEN.store(next, Ordering::Relaxed);
                 self.note.clear();
                 self.picking = false;
                 if !open {

@@ -153,7 +153,11 @@ static MOUSE_CAPTURE: std::sync::LazyLock<Mutex<MouseCapture>> =
     std::sync::LazyLock::new(|| Mutex::new(MouseCapture::default()));
 
 fn capture_mouse(hwnd: HWND, active: bool) {
-    if !enabled("VICTORY_MOUSE_CAPTURE") { return; }
+    if !enabled("VICTORY_MOUSE_CAPTURE")
+        || super::gameinput::cursor::ENABLED.load(Ordering::Relaxed)
+    {
+        return;
+    }
     let mut state = MOUSE_CAPTURE.lock().unwrap_or_else(|e| e.into_inner());
     // SAFETY: runs on the window thread; local geometry, balanced cursor count.
     unsafe {
@@ -386,6 +390,30 @@ extern "system" fn window_proc(
     // menu. The mouse still opens it from the title bar.
     if message == wm::WM_SYSCOMMAND && wparam & 0xFFF0 == wm::SC_KEYMENU as usize {
         return 0;
+    }
+    // The mouse cursor for keyboard and mouse play (`gameinput::cursor`):
+    // hidden over the window while captured, captured by a click, freed when
+    // the window loses focus or enters a size/move loop. The title still sees
+    // every message.
+    match message {
+        wm::WM_SETCURSOR
+            if super::gameinput::cursor::captured() && lparam as u32 & 0xFFFF == wm::HTCLIENT =>
+        {
+            // SAFETY: no cursor while it is over our client area.
+            unsafe { wm::SetCursor(std::ptr::null_mut()) };
+            return 1;
+        }
+        wm::WM_LBUTTONDOWN | wm::WM_RBUTTONDOWN | wm::WM_MBUTTONDOWN
+            if !victory_gpu::overlay_open() =>
+        {
+            super::gameinput::cursor::click();
+        }
+        wm::WM_KILLFOCUS => super::gameinput::cursor::release(),
+        // Sizing or moving the window: the cursor is the user's until the
+        // loop ends (a clip following a shrinking client area collapses it).
+        wm::WM_ENTERSIZEMOVE => super::gameinput::cursor::size_move(true),
+        wm::WM_EXITSIZEMOVE => super::gameinput::cursor::size_move(false),
+        _ => {}
     }
     // SAFETY: the procedure `hook` stored, called the way the system would.
     unsafe {

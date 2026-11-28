@@ -2,7 +2,7 @@ use std::path::Path;
 
 use anyhow::{Context, Result};
 
-use crate::{Console, Unimplemented};
+use crate::{Console, Prompts, Unimplemented};
 
 #[path = "native_1440p.rs"]
 mod native_1440p;
@@ -102,17 +102,51 @@ fn title_executable(given: &Path) -> Result<std::path::PathBuf> {
     }
 }
 
+/// How `victory run` loads and starts the title: the command's options.
+pub struct Launch {
+    pub unimplemented: Unimplemented,
+    pub strict: bool,
+    pub execute: bool,
+    pub console: Console,
+    pub prompts: Option<Prompts>,
+}
+
+/// Resolves whether button prompts show gamepad icons or keyboard/mouse key
+/// caps. Precedence: CLI `--prompts` > `VICTORY_PROMPTS` > `[controls] prompts`.
+fn resolve_prompts(
+    cli: Option<Prompts>,
+    env: Option<&str>,
+    configured: victory_core::pad::PromptMode,
+) -> Result<victory_core::pad::PromptMode> {
+    use victory_core::pad::PromptMode;
+    if let Some(p) = cli {
+        return Ok(match p {
+            Prompts::Gamepad => PromptMode::Gamepad,
+            Prompts::Keys => PromptMode::Keys,
+        });
+    }
+    if let Some(raw) = env.map(str::trim).filter(|s| !s.is_empty()) {
+        return PromptMode::parse(raw).ok_or_else(|| {
+            anyhow::anyhow!("VICTORY_PROMPTS={raw:?}: expected \"gamepad\" or \"keys\"")
+        });
+    }
+    Ok(configured)
+}
+
 #[cfg(windows)]
-pub fn run(
-    exe: &Path,
-    unimplemented: Unimplemented,
-    strict: bool,
-    execute: bool,
-    console: Console,
-) -> Result<()> {
+pub fn run(exe: &Path, launch: &Launch) -> Result<()> {
     use std::sync::Arc;
+    use victory_core::pad::PromptMode;
     use victory_hle::{HleResolver, HostPolicy};
     use victory_loader::{BindReport, UnimplementedPolicy, WithTitleDlls};
+
+    let &Launch {
+        unimplemented,
+        strict,
+        execute,
+        console,
+        prompts,
+    } = launch;
 
     if execute {
         check_cpu_features()?;
@@ -120,6 +154,17 @@ pub fn run(
     // A title that relaunched itself: the old process must be gone first.
     victory_hle::modules::lifecycle::wait_for_previous();
     let cfg = victory_core::Config::load()?;
+    victory_hle::modules::controls::configure_with_path(
+        cfg.controls.as_ref(),
+        cfg.source.as_deref(),
+    )
+    .map_err(anyhow::Error::msg)?;
+    let prompts_env = std::env::var("VICTORY_PROMPTS").ok();
+    let prompt_mode = resolve_prompts(
+        prompts,
+        prompts_env.as_deref(),
+        victory_hle::modules::controls::configured_prompts(),
+    )?;
     // DLSS and frame generation (`VICTORY_DLSS`, `VICTORY_FRAMEGEN`): Streamline
     // is loaded before anything of the title or the host GPU, and fails soft;
     // only if it offers one of them does the title render through its
@@ -156,7 +201,8 @@ pub fn run(
     let original = std::fs::read(exe).with_context(|| format!("reading {}", exe.display()))?;
     let mut prepared = victory_loader::prepare(&original)?;
     let hash = prepared.original_hash.to_hex();
-    match victory_game::identify(&hash) {
+    let build = victory_game::identify(&hash);
+    match build {
         Some(build) => println!("build          {} ({hash})", build.label),
         None => println!("build          unknown ({hash})"),
     }
@@ -325,6 +371,17 @@ pub fn run(
     // generation is on (bound as before otherwise).
     let interposed = victory_hle::modules::fidelityfx::Interpose { inner: &with_dlls };
     show(&exe_name, image.bind_imports(&interposed, policy)?);
+    match prompt_mode {
+        PromptMode::Gamepad => {}
+        PromptMode::Keys if execute => show_keys_in_prompts(
+            &image,
+            build,
+            victory_hle::modules::controls::prompt_labels(),
+        ),
+        PromptMode::Keys => {
+            println!("prompts        keyboard keys: the hook is placed only with --execute");
+        }
+    }
     if execute {
         let size = image.info().size_of_image as usize;
         // SAFETY: the image stays mapped, and nothing of it has run yet.
@@ -380,6 +437,42 @@ pub fn run(
         .map_err(|_| anyhow::anyhow!("title main thread panicked"))??;
     println!("title exited with {code}");
     Ok(())
+}
+
+/// `--prompts keys` / `VICTORY_PROMPTS=keys` / `[controls] prompts = "keys"`:
+/// places the hook that hands the title key caps for its button pictures, and
+/// says whether it is placed. Before the title starts.
+#[cfg(windows)]
+fn show_keys_in_prompts(
+    image: &victory_loader::LoadedImage,
+    build: Option<&victory_game::KnownBuild>,
+    labels: victory_core::pad::PromptLabels,
+) {
+    let Some(build) = build else {
+        tracing::warn!("prompts: keyboard keycaps requested, but the executable build is unknown");
+        println!("prompts        gamepad pictures: the keys need a known build");
+        return;
+    };
+    let Some(offsets) = build.key_prompts else {
+        tracing::warn!(
+            build = build.label,
+            "prompts: keyboard keycaps requested, but this build has no hook offsets"
+        );
+        println!(
+            "prompts        gamepad pictures: no keys for {}",
+            build.label
+        );
+        return;
+    };
+    // SAFETY: the image of the build the offsets belong to is mapped and
+    // bound, and no title thread runs yet.
+    match unsafe { victory_game::prompts::hook::install(image, offsets, labels) } {
+        Ok(()) => println!("prompts        keyboard keys: hook placed"),
+        Err(refused) => {
+            tracing::warn!(%refused, "prompts: hook could not be placed");
+            println!("prompts        gamepad pictures: {refused}");
+        }
+    }
 }
 
 /// The debugging aids (README): scheduled stack dumps, watched values and
@@ -755,9 +848,46 @@ mod cpu_check_tests {
     fn skip_env_var_bypasses_missing_avx2() {
         assert!(check_cpu_features_with(false, Some("1")).is_ok());
     }
+
+    #[test]
+    fn prompt_mode_precedence_is_cli_then_env_then_config() {
+        use super::resolve_prompts;
+        use crate::Prompts;
+        use victory_core::pad::PromptMode;
+
+        assert_eq!(
+            resolve_prompts(Some(Prompts::Gamepad), Some("keys"), PromptMode::Keys).unwrap(),
+            PromptMode::Gamepad
+        );
+        assert_eq!(
+            resolve_prompts(Some(Prompts::Keys), Some("gamepad"), PromptMode::Gamepad).unwrap(),
+            PromptMode::Keys
+        );
+        assert_eq!(
+            resolve_prompts(None, Some("keys"), PromptMode::Gamepad).unwrap(),
+            PromptMode::Keys
+        );
+        assert_eq!(
+            resolve_prompts(None, Some("gamepad"), PromptMode::Keys).unwrap(),
+            PromptMode::Gamepad
+        );
+        assert_eq!(
+            resolve_prompts(None, Some(""), PromptMode::Keys).unwrap(),
+            PromptMode::Keys
+        );
+        assert_eq!(
+            resolve_prompts(None, None, PromptMode::Keys).unwrap(),
+            PromptMode::Keys
+        );
+        assert_eq!(
+            resolve_prompts(None, None, PromptMode::Gamepad).unwrap(),
+            PromptMode::Gamepad
+        );
+        assert!(resolve_prompts(None, Some("bogus"), PromptMode::Gamepad).is_err());
+    }
 }
 
 #[cfg(not(windows))]
-pub fn run(_: &Path, _: Unimplemented, _: bool, _: bool, _: Console) -> Result<()> {
+pub fn run(_: &Path, _: &Launch) -> Result<()> {
     anyhow::bail!("running titles requires Windows")
 }
